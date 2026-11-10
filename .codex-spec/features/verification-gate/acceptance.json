@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "feature": "verification-gate",
+  "state": "ready",
+  "criteria": [
+    {
+      "id": "AC-CONTRACT",
+      "description": "Malformed or incomplete contracts cannot pass.",
+      "checks": [
+        "verification-tests"
+      ]
+    },
+    {
+      "id": "AC-EXECUTION",
+      "description": "Failures and cancellation cannot pass; output and subprocess lifetime are bounded.",
+      "checks": [
+        "verification-tests"
+      ]
+    },
+    {
+      "id": "AC-FRESHNESS",
+      "description": "Changed inputs or inconsistent evidence cannot pass status.",
+      "checks": [
+        "verification-tests"
+      ]
+    },
+    {
+      "id": "AC-BOUNDARIES",
+      "description": "Manual/draft review stays blocked; unsupported or unsafe paths and concurrent runs are rejected.",
+      "checks": [
+        "verification-tests"
+      ]
+    },
+    {
+      "id": "AC-PORTABILITY",
+      "description": "The CLI returns gate exit codes and the skill works when copied alone.",
+      "checks": [
+        "cli-tests"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "verification-tests",
+      "argv": [
+        "node",
+        "--test",
+        "test/verification.test.js"
+      ],
+      "timeoutMs": 120000
+    },
+    {
+      "id": "cli-tests",
+      "argv": [
+        "node",
+        "--test",
+        "test/cli.test.js"
+      ],
+      "timeoutMs": 120000
+    }
+  ]
+}

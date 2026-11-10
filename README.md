@@ -1,153 +1,148 @@
 # codex-spec
 
-Specification-driven development workflows for AI coding. codex-spec turns intent into executable specs and plans, then guides consistent implementation with context-aware commands.
+**Codex implements the change. codex-spec defines and checks what “done” means.**
 
-## Why
+A Codex-native skill, reviewable spec contracts, and a dependency-free verification runner. Use it for features, bugs, refactors, and performance work where acceptance evidence matters.
 
-AI is great at generating code, but results can be inconsistent without clear intent and shared context. codex-spec makes specifications the source of truth so you can:
+This is the **v2 source tree**, a clean redesign around acceptance verification. Use this checkout or copy its skill directory; these instructions do not assume a v2 npm release exists.
 
-- Align teams on intent before coding
-- Preserve evolving project context (product, tech, structure)
-- Generate detailed requirements and plans automatically
-- Execute tasks with dependency awareness and progress tracking
+## What it does
 
-This reduces rework, accelerates delivery, and keeps documentation in lockstep with the codebase.
+1. **Spec:** capture intent, constraints, and observable acceptance criteria.
+2. **Implement:** let Codex explore, plan, edit, and iterate using its native tools.
+3. **Verify:** run explicit checks and associate their results with criteria and a fingerprint of the code and contract.
 
-## Workflow Diagram
+A successful Codex run means implementation was attempted. Only passing acceptance checks against an unchanged workspace produce `verified`. That label describes automated acceptance coverage, not proof of correctness or permission to merge.
 
-```mermaid
-flowchart TD
-  A[Setup] --> B[Context Creation]
-  B --> C[Feature Specification]
-  C --> D[Requirements]
-  D --> E[Implementation Plan]
-  E --> F[Execute Tasks]
-  F --> G[Progress & Status]
-  G --> H[Maintenance: Context Update/Refresh]
-```
+## Start in this repository
 
-## Installation
+Requires Node.js 22+ and Git. Verification supports macOS and Linux.
 
-Prerequisites:
-
-- Node.js >= 16
-- OpenAI API key (environment variable `OPENAI_API_KEY`)
-
-Install globally:
+No dependency installation or API key is needed for the toolkit:
 
 ```bash
-npm install -g codex-spec
+node src/cli.js spec rate-limiter "Limit each API client to 100 requests per minute"
 ```
 
-Set your API key:
+This creates:
+
+```text
+.codex-spec/features/rate-limiter/
+  spec.md            Intent, scope, constraints, design decisions
+  acceptance.json    Criterion IDs mapped to commands or manual review
+  evidence.json      Written only when verification runs
+```
+
+In Codex, invoke the bundled skill:
+
+```text
+$spec-driven-development Refine the rate-limiter contract, then implement
+it within the agreed scope and run its acceptance checks.
+```
+
+Or use native non-interactive Codex:
 
 ```bash
-export OPENAI_API_KEY=your_api_key_here
+codex exec --sandbox workspace-write \
+  'Use $spec-driven-development to implement .codex-spec/features/rate-limiter. Follow the contract and run verification.'
 ```
 
-Optional: If you use the Codex CLI locally, ensure it is installed and available on PATH.
+Codex handles its own authentication, model configuration, permissions, and context. codex-spec does not launch another agent or manage sessions.
 
-## Quickstart
-
-Initialize project context (product, tech, structure):
+After defining concrete criteria, change `state` from `draft` to `ready` in `acceptance.json`. That is a contract readiness marker, not a record of human approval. Run:
 
 ```bash
-codex-spec context-setup --force
+node src/cli.js verify rate-limiter
+node src/cli.js status rate-limiter
 ```
 
-Create a feature specification:
+Both commands print JSON. Verification executes the commands in the contract, so inspect that file as you would a build script.
+
+## A contract example
+
+```json
+{
+  "schemaVersion": 1,
+  "feature": "rate-limiter",
+  "state": "ready",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "description": "The first 100 requests succeed; request 101 returns 429.",
+      "checks": ["rate-limit-tests"]
+    },
+    {
+      "id": "AC-2",
+      "description": "Existing API behavior remains compatible.",
+      "checks": ["regression"]
+    }
+  ],
+  "checks": [
+    {
+      "id": "rate-limit-tests",
+      "argv": ["node", "--test", "test/rate-limit.test.js"],
+      "timeoutMs": 30000
+    },
+    {
+      "id": "regression",
+      "argv": ["npm", "test"],
+      "timeoutMs": 120000
+    }
+  ]
+}
+```
+
+Commands are argument arrays, executed without an implicit shell from the repository root (or a validated relative `cwd`). Every check must map to a criterion; every criterion needs checks or a specific manual review procedure. A manual criterion uses `"manual": "Review procedure"` instead of `checks` and keeps the overall gate blocked. Human approval belongs in the project's review system; the runner never invents it.
+
+See the [contract and evidence reference](.agents/skills/spec-driven-development/references/contracts.md) for the full format and limits.
+
+## Use the skill in another repository
+
+Copy the **whole** skill directory, including its scripts and references:
 
 ```bash
-codex-spec create "User onboarding" "Signup, verification, and first-run experience"
+mkdir -p /path/to/project/.agents/skills
+cp -R .agents/skills/spec-driven-development /path/to/project/.agents/skills/
+cd /path/to/project
+node .agents/skills/spec-driven-development/scripts/codex-spec.mjs \
+  spec rate-limiter "Limit each API client to 100 requests per minute"
 ```
 
-Generate detailed requirements and a plan with tasks:
+No global install is required. The skill is self-contained. If you prefer the short `codex-spec` command, run `npm link` from this checkout. The npm package entry point uses the same implementation as the skill.
+
+## Verification semantics
+
+| Result | Meaning | Exit code |
+| --- | --- | --- |
+| `verified` | Every declared automated criterion passed; inputs stayed unchanged | 0 |
+| `failed` | A check failed, timed out, was interrupted, or could not start | 1 |
+| `blocked` | Draft contract, manual review outstanding, or active verification lock | 1 |
+| `stale` | Code, HEAD, or contract no longer matches the tested inputs | 1 |
+| `unverified` | No evidence exists | 1 |
+| `invalid` | Invalid contract/evidence or verification infrastructure error | 2 |
+
+`spec`, help, and version exit 0 on success. Usage errors exit 2.
+
+Evidence includes criterion mappings, exact arguments, timestamps, duration, exit codes, signals, bounded stdout/stderr, and before/after workspace hashes. Status recomputes freshness and validates result coverage instead of trusting a saved status label. Running verification replaces the previous receipt atomically; archive receipts in CI for run history.
+
+The fingerprint covers Git HEAD, tracked files (including modifications and deletions), nonignored untracked files, executable bits, symlink targets, and the current contract even if ignored. Generated evidence and the verification lock are excluded. Ignored dependencies/build output, external symlink contents, environment variables, databases, and remote services are outside the fingerprint. This is local, unsigned evidence from trusted checks, not an isolated sandbox or tamper-proof attestation. Submodules fail closed rather than silently receiving partial coverage.
+
+Tests should not modify source files. If they do, evidence becomes stale; fix the check or rerun once the workspace is stable. A passing test only supports the behavior it actually asserts—review the criterion-to-test mapping.
+
+## Development and CI
 
 ```bash
-codex-spec requirements
-codex-spec plan
-codex-spec plan-summary  # also runs automatically after `plan`
-codex-spec tasks         # list task IDs, titles, phases, status
+npm test
+npm run check
+node src/cli.js verify verification-gate
+npm pack --dry-run
 ```
 
-Execute a task and track progress:
+The checked-in `verification-gate` contract exercises the toolkit itself. CI runs the tests on Linux and macOS, runs the contract gate, and archives evidence. It requires no Codex credentials.
 
-```bash
-codex-spec execute task-1
-codex-spec status
-```
+Keep `AGENTS.md` concise and stable. Read architecture and product documentation when relevant to a task; there is no generated context-refresh cycle.
 
-Maintain up-to-date context:
+- [Design decisions and research](docs/design-v2.md)
+- [Runnable failure/repair demo](DEMO.md)
 
-```bash
-codex-spec context-update --auto
-codex-spec context-refresh
-```
-
-## Commands
-
-- `context-setup`:
-  - Initialize `.codex-specs/context/product.md`, `tech.md`, `structure.md`
-- `context-update [component]`:
-  - Update product/tech/structure context (use `--auto` to diff recent changes)
-- `context-refresh`:
-  - Regenerate context files from scratch
-- `create <feature-name> [description]`:
-  - Create a comprehensive feature specification
-- `requirements [spec-name]`:
-  - Generate requirements from the specification
-- `plan [spec-name]`:
-  - Create the implementation plan and extract tasks to `.codex-specs/<spec>/tasks.json`
-- `execute <task-id>`:
-  - Execute an implementation task with context and plan guidance
-  - Sandbox: writes are enabled by default (workspace-write). Use `--read-only` to prevent writes.
-- `tasks`:
-  - List tasks with IDs, titles, phase, and status
-- `execute-phase <phase>`:
-  - Execute all tasks in a specific phase
-  - Sandbox: writes enabled by default; pass `--read-only` to prevent writes
-- `status` / `plan-summary`:
-  - View progress and plan overview
-
-Notes:
-- Phase names with spaces must be quoted or escaped when running by phase:
-  - macOS/Linux: `codex-spec execute-phase "Core Features"` or `codex-spec execute-phase Core\ Features`
-  - Windows: `codex-spec execute-phase "Core Features"`
-- Spec directory naming: defaults to AI-chosen snake_case slug with date prefix (`YYYY-MM-DD_name_of_the_spec`). Override with `--title "your_slug"`.
-
-## Project Files
-
-Key directories created in your repo:
-
-```
-.codex-specs/
-├── context/
-│   ├── product.md
-│   ├── tech.md
-│   └── structure.md
-└── <feature-name>/
-    ├── specification.md
-    ├── requirements.md
-    ├── plan.md
-    └── tasks.json
-```
-
-## Configuration
-
-- Requires `OPENAI_API_KEY`
-- Works in any Git project; `--auto` context updates use `git diff`
-- Defaults are sensible; commands expose `--help` for options
-
-## Troubleshooting
-
-- Command hangs or errors when running tasks: ensure the `codex` CLI (if you use it) is installed and available on PATH; otherwise the tool will use the OpenAI API for generation and planning.
-- API errors: verify `OPENAI_API_KEY` and network connectivity.
-
-## Design & Requirements
-
-- Product Requirements: [`design/codex_spec_product_requirements.md`](design/codex_spec_product_requirements.md)
-- Technical Design: [`design/codex_spec_workflow.md`](design/codex_spec_workflow.md)
-
-## License
-
-MIT
+MIT.

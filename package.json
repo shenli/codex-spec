@@ -1,34 +1,31 @@
 {
   "name": "codex-spec",
-  "version": "1.0.0",
-  "description": "Specification-driven development workflow for AI coding (OpenAI Codex)",
+  "version": "2.0.0",
+  "description": "Codex-native spec contracts and reproducible verification evidence",
   "type": "module",
   "bin": {
     "codex-spec": "src/cli.js"
   },
+  "files": [
+    "src/",
+    ".agents/skills/spec-driven-development/",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    "DEMO.md",
+    "scripts/demo.mjs"
+  ],
   "scripts": {
     "start": "node src/cli.js",
-    "lint": "eslint .",
-    "type-check": "tsc --noEmit",
-    "test": "vitest"
-  },
-  "dependencies": {
-    "boxen": "^7.1.1",
-    "chalk": "^5.3.0",
-    "commander": "^11.1.0",
-    "fs-extra": "^11.2.0",
-    "inquirer": "^9.2.12",
-    "openai": "^4.20.1",
-    "ora": "^7.0.1"
-  },
-  "devDependencies": {
-    "eslint": "^8.57.0",
-    "typescript": "^5.6.2",
-    "vitest": "^1.6.0"
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/cli.js && node --test test/*.test.js"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shenli/codex-spec.git"
+  }
 }
-

@@ -9,7 +9,7 @@ Let Codex choose the implementation approach. Use the contract to define the out
 
 ## Contract
 
-Use one feature directory at `.codex-spec/features/<slug>/` with `spec.md` and `acceptance.json`. Reuse an existing contract when it matches the request. Keep small tasks small; do not invent phases, task graphs, or mandatory design approvals.
+Use one feature directory at `.codex-spec/features/<slug>/` with `spec.md` as the only hand-edited contract. Reuse an existing contract when it matches the request. Keep small tasks small; do not invent phases, task graphs, or mandatory design approvals.
 
 The helper is `scripts/codex-spec.mjs` relative to this skill directory. From the repository root, invoke it with Node.js (22+):
 
@@ -17,9 +17,9 @@ The helper is `scripts/codex-spec.mjs` relative to this skill directory. From th
 node <skill-directory>/scripts/codex-spec.mjs spec <slug> "<intent>"
 ```
 
-Read [contracts.md](references/contracts.md) when authoring a contract or interpreting evidence. Convert the intent into observable criteria with stable IDs and concrete checks. Include relevant regressions and constraints; use manual criteria for outcomes that cannot be established by commands. For performance work, have a check enforce a threshold under a documented workload instead of merely printing a measurement.
+Read [contracts.md](references/contracts.md) when authoring a contract or interpreting evidence. Convert the intent into observable criteria under `## Acceptance criteria`. Give each a unique `###` heading and put a `Verify:` inline-code command or a `Review:` procedure directly beneath it. The helper generates IDs and mappings; do not author a second machine-readable contract. Include relevant regressions and constraints; use manual criteria for outcomes that cannot be established by commands. For performance work, have a check enforce a threshold under a documented workload instead of merely printing a measurement.
 
-Resolve material ambiguity using repository evidence and the user's instructions. Record assumptions and design decisions in `spec.md`. Honor approval requirements already established by the user or project; do not add a new approval round solely because this skill is active. Set the contract state to `ready` once its criteria and scope are concrete.
+Resolve material ambiguity using repository evidence and the user's instructions. Record assumptions and design decisions in `spec.md`. Honor approval requirements already established by the user or project; do not add a new approval round solely because this skill is active. Ensure every criterion has a concrete command or review procedure; readiness is derived automatically.
 
 ## Implementation
 

@@ -11,10 +11,11 @@ export const exitCodeFor = status => status === 'verified' ? 0 : status === 'inv
 function criteriaResults(contract, checks) {
   return contract.criteria.map(criterion => ({
     id: criterion.id,
+    title: criterion.title,
     description: criterion.description,
-    status: criterion.manual ? 'manual-required' :
+    status: criterion.pending ? 'unverified' : criterion.manual ? 'manual-required' :
       criterion.checks.every(id => checks.find(check => check.id === id)?.status === 'passed') ? 'passed' : 'failed',
-    ...(criterion.manual ? { reason: criterion.manual } : { checks: criterion.checks })
+    ...(criterion.pending ? { reason: 'Add Verify or Review for this criterion' } : criterion.manual ? { reason: criterion.manual } : { checks: criterion.checks })
   }));
 }
 function gate(contract, checks, changed) {
@@ -38,7 +39,7 @@ export async function verify(root, feature, { signal } = {}) {
     throw error;
   }
   const evidence = {
-    schemaVersion: 1, runnerVersion: VERSION, runId: randomUUID(), feature,
+    schemaVersion: 2, runnerVersion: VERSION, runId: randomUUID(), feature,
     startedAt: new Date().toISOString(), status: 'running',
     runtime: { node: process.version, platform: process.platform, arch: process.arch },
     checks: [], criteria: []
@@ -48,7 +49,7 @@ export async function verify(root, feature, { signal } = {}) {
     // Invalidate a previous pass before any checks or parsing can fail.
     await writeEvidence(root, directory, evidence);
     const initial = await readContract(root, feature);
-    evidence.inputs = { specSha256: initial.specHash, acceptanceSha256: initial.acceptanceHash };
+    evidence.inputs = { specSha256: initial.specHash };
     const before = await snapshot(root, feature);
     evidence.workspace = { before, after: null };
     const directories = [];
@@ -66,11 +67,11 @@ export async function verify(root, feature, { signal } = {}) {
     evidence.workspace.after = after;
     const latest = await readContract(root, feature);
     const changed = before.sha256 !== after.sha256 ||
-      initial.specHash !== latest.specHash || initial.acceptanceHash !== latest.acceptanceHash;
+      initial.specHash !== latest.specHash;
     evidence.criteria = criteriaResults(initial.contract, evidence.checks);
     evidence.status = gate(initial.contract, evidence.checks, changed);
     if (changed) evidence.reason = 'Workspace or contract changed during verification; rerun after changes stop';
-    else if (initial.contract.state === 'draft') evidence.reason = 'Contract is draft; define and review criteria before setting state to ready';
+    else if (initial.contract.state === 'draft') evidence.reason = 'Add Verify or Review to every acceptance criterion before running checks';
     else if (evidence.status === 'blocked') evidence.reason = 'Manual criteria require separate review; this runner cannot attest human approval';
   } catch (error) {
     evidence.status = 'invalid';
@@ -98,12 +99,12 @@ export async function status(root, feature) {
       throw error;
     }
     const invalid = reason => ({ feature, status: 'invalid', reason });
-    if (evidence.schemaVersion !== 1 || evidence.runnerVersion !== VERSION || evidence.feature !== feature) {
+    if (evidence.schemaVersion !== 2 || evidence.runnerVersion !== VERSION || evidence.feature !== feature) {
       return invalid('Unsupported or mismatched evidence');
     }
     if (evidence.status === 'running') return invalid('Previous verification did not finish');
     if (evidence.status === 'invalid') return invalid(evidence.reason ?? 'Previous verification failed to run');
-    if (evidence.inputs?.specSha256 !== current.specHash || evidence.inputs?.acceptanceSha256 !== current.acceptanceHash) {
+    if (evidence.inputs?.specSha256 !== current.specHash) {
       return { feature, status: 'stale', reason: 'Contract changed since verification' };
     }
     const now = await snapshot(root, feature);

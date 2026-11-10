@@ -1,7 +1,7 @@
 {
   "name": "codex-spec",
   "version": "2.0.0",
-  "description": "Codex-native spec contracts and reproducible verification evidence",
+  "description": "Codex-native spec-driven development with readable Markdown contracts and verification evidence.",
   "type": "module",
   "bin": {
     "codex-spec": "src/cli.js"

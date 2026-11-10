@@ -20,11 +20,9 @@ await fs.writeFile(path.join(root, 'double.test.cjs'),
   'const double = require("./double.cjs");\n' +
   'test("doubles positive, negative, and zero values", () => {\n' +
   '  assert.equal(double(2), 4); assert.equal(double(-3), -6); assert.equal(double(0), 0);\n});\n');
-await fs.writeFile(path.join(root, '.codex-spec/features/double/acceptance.json'), JSON.stringify({
-  schemaVersion: 1, feature: 'double', state: 'ready',
-  criteria: [{ id: 'AC-1', description: 'Double positive, negative, and zero values.', checks: ['unit'] }],
-  checks: [{ id: 'unit', argv: [process.execPath, '--test', 'double.test.cjs'], timeoutMs: 10000 }]
-}, null, 2));
+await fs.writeFile(path.join(root, '.codex-spec/features/double/spec.md'),
+'# Double a number\n\n## Acceptance criteria\n\n### Correct results\nDouble positive, negative, and zero values.\n\n' +
+'Verify: `node --test double.test.cjs`\nTimeout: 10s\n');
 const failed = run(['verify', 'double'], 1);
 assert.equal(failed.status, 'failed');
 await fs.writeFile(path.join(root, 'double.cjs'), 'module.exports = n => n * 2;\n');

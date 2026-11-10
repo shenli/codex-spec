@@ -6,7 +6,7 @@ Run from this checkout with Node.js 22+ and Git on macOS or Linux:
 node scripts/demo.mjs
 ```
 
-No packages, model calls, or credentials are required. The demo creates a temporary Git repository with a deliberately incorrect number-doubling function and real assertions for positive, negative, and zero inputs.
+No packages, model calls, or credentials are required. The demo creates a temporary Git repository with a deliberately incorrect number-doubling function, a single Markdown spec, and real assertions for positive, negative, and zero inputs.
 
 It verifies three observable transitions:
 

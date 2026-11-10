@@ -31,7 +31,6 @@ export async function snapshot(root, feature) {
     .split('\0').filter(Boolean));
   // These inputs must be included even if a project ignores .codex-spec.
   paths.add('.codex-spec/features/' + feature + '/spec.md');
-  paths.add('.codex-spec/features/' + feature + '/acceptance.json');
   const digest = createHash('sha256');
   digest.update(JSON.stringify({ version: 1, head }));
   let fileCount = 0;

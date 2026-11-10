@@ -4,61 +4,33 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createSpec, validateContract } from '../.agents/skills/spec-driven-development/scripts/lib/contract.mjs';
+import { createSpec } from '../.agents/skills/spec-driven-development/scripts/lib/contract.mjs';
 import { repositoryRoot, snapshot } from '../.agents/skills/spec-driven-development/scripts/lib/workspace.mjs';
 import { verify, status } from '../.agents/skills/spec-driven-development/scripts/lib/workflow.mjs';
 import { runCheck } from '../.agents/skills/spec-driven-development/scripts/lib/runner.mjs';
 
+import { commandLine, specForCheck } from './helpers.js';
+
 const feature = 'example';
 const nodeCheck = (script = 'console.log("checked")') => ({ id: 'unit', argv: [process.execPath, '-e', script] });
-function contract(check = nodeCheck()) {
-  return { schemaVersion: 1, feature, state: 'ready',
-    criteria: [{ id: 'AC-1', description: 'Required behavior holds', checks: ['unit'] }], checks: [check] };
-}
+const contract = (check = nodeCheck()) => specForCheck(check);
 async function fixture(t, value = contract()) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'codex-spec-test-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', root]);
   const directory = await createSpec(root, feature, 'Observable behavior');
-  const acceptance = path.join(directory, 'acceptance.json');
-  await fs.writeFile(acceptance, JSON.stringify(value));
-  return { root, directory, acceptance, evidence: path.join(directory, 'evidence.json') };
+  const spec = path.join(directory, 'spec.md');
+  await fs.writeFile(spec, value);
+  return { root, directory, spec, evidence: path.join(directory, 'evidence.json') };
 }
 
-test('strict contracts reject incomplete, ambiguous and mistyped criteria', () => {
-  const mutations = [
-    c => { c.criteria = []; },
-    c => { c.criteria[0].checks = []; },
-    c => { c.criteria[0].checks = ['missing']; },
-    c => { c.criteria[0].manual = 'review'; },
-    c => { c.criteria[0].checks.push('unit'); },
-    c => { c.checks.push(nodeCheck()); },
-    c => { c.checks[0].argv = 'npm test'; },
-    c => { c.checks[0].timeoutMs = 0; },
-    c => { c.checks[0].timeoutMs = 600001; },
-    c => { c.checks[0].cwd = '../outside'; },
-    c => { c.checks[0].cwd = '/tmp'; },
-    c => { c.checks[0].optional = true; },
-    c => { c.feature = 'wrong'; },
-    c => { c.schemaVersion = 3; },
-    c => { delete c.criteria[0].id; },
-    c => { delete c.checks[0].id; },
-    c => { c.checks[0].argv[0] = 'bad\0command'; },
-    c => { c.checks.push({ id: 'unused', argv: ['true'] }); }
-  ];
-  for (const mutate of mutations) {
-    const value = contract(); mutate(value);
-    assert.throws(() => validateContract(value, feature), undefined, mutate.toString());
-  }
-});
-
 test('scaffold does not overwrite, traverses no paths, and cannot pass as a draft', async t => {
-  const { root, acceptance } = await fixture(t);
+  const { root, spec } = await fixture(t);
   await assert.rejects(createSpec(root, feature, 'overwrite'), /EEXIST/);
   await assert.rejects(createSpec(root, '../escape', 'bad'), /slug/);
   await assert.rejects(createSpec(root, 'empty', ' '), /intent/);
-  const value = contract(); value.state = 'draft';
-  await fs.writeFile(acceptance, JSON.stringify(value));
+  const value = '# Example\n\n## Acceptance criteria\n\n### Expected behavior\nObservable behavior.\n';
+  await fs.writeFile(spec, value);
   const result = await verify(root, feature);
   assert.equal(result.status, 'blocked');
   assert.deepEqual(result.checks, []);
@@ -80,13 +52,13 @@ test('successful checks produce mapped evidence and a fresh verified status', as
 });
 
 test('nonzero checks fail and a later repair requires a fresh run', async t => {
-  const { root, acceptance } = await fixture(t, contract(nodeCheck('console.error("regression"); process.exit(7)')));
+  const { root, spec } = await fixture(t, contract(nodeCheck('console.error("regression"); process.exit(7)')));
   const failed = await verify(root, feature);
   assert.equal(failed.status, 'failed');
   assert.equal(failed.checks[0].exitCode, 7);
   assert.match(failed.checks[0].stderr, /regression/);
   assert.equal((await status(root, feature)).status, 'failed');
-  await fs.writeFile(acceptance, JSON.stringify(contract()));
+  await fs.writeFile(spec, contract());
   assert.equal((await status(root, feature)).status, 'stale');
   assert.equal((await verify(root, feature)).status, 'verified');
 });
@@ -133,8 +105,7 @@ test('output is bounded and shell metacharacters are literal arguments', async t
 });
 
 test('manual criteria block the gate even when every automated check passes', async t => {
-  const value = contract();
-  value.criteria.push({ id: 'AC-review', description: 'Design approved', manual: 'Maintainer reviews the diff in the PR' });
+  const value = contract() + '\n### Design approval\nReview: Maintainer reviews the diff in the PR\n';
   const { root } = await fixture(t, value);
   const result = await verify(root, feature);
   assert.equal(result.checks[0].status, 'passed'); assert.equal(result.status, 'blocked');
@@ -143,9 +114,7 @@ test('manual criteria block the gate even when every automated check passes', as
 });
 
 test('all declared checks run and one failing regression check prevents verification', async t => {
-  const value = contract();
-  value.checks.push({ ...nodeCheck('process.exit(1)'), id: 'regression' });
-  value.criteria[0].checks.push('regression');
+  const value = contract() + '\nVerify: `'+commandLine(nodeCheck('process.exit(1)').argv)+'`\n';
   const { root } = await fixture(t, value);
   const result = await verify(root, feature);
   assert.equal(result.status, 'failed');
@@ -153,9 +122,9 @@ test('all declared checks run and one failing regression check prevents verifica
   assert.equal(result.criteria[0].status, 'failed');
 });
 
-for (const kind of ['untracked', 'tracked', 'deleted', 'spec', 'acceptance', 'head']) {
+for (const kind of ['untracked', 'tracked', 'deleted', 'spec', 'command', 'head']) {
   test('evidence becomes stale after ' + kind + ' changes', async t => {
-    const { root, directory, acceptance } = await fixture(t);
+    const { root, directory, spec } = await fixture(t);
     await fs.writeFile(path.join(root, 'source.js'), 'original\n');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'baseline'], { cwd: root });
@@ -164,7 +133,7 @@ for (const kind of ['untracked', 'tracked', 'deleted', 'spec', 'acceptance', 'he
     if (kind === 'tracked') await fs.writeFile(path.join(root, 'source.js'), 'changed');
     if (kind === 'deleted') await fs.unlink(path.join(root, 'source.js'));
     if (kind === 'spec') await fs.appendFile(path.join(directory, 'spec.md'), '\nNew requirement');
-    if (kind === 'acceptance') await fs.appendFile(acceptance, '\n');
+    if (kind === 'command') await fs.writeFile(spec, contract(nodeCheck('console.log("updated check")')));
     if (kind === 'head') execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com',
       'commit', '--allow-empty', '-qm', 'new head'], { cwd: root });
     assert.equal((await status(root, feature)).status, 'stale');
@@ -172,7 +141,7 @@ for (const kind of ['untracked', 'tracked', 'deleted', 'spec', 'acceptance', 'he
 }
 
 test('ignored contracts are still fingerprinted; generated evidence is excluded', async t => {
-  const { root, acceptance, evidence } = await fixture(t);
+  const { root, spec, evidence } = await fixture(t);
   await fs.writeFile(path.join(root, '.gitignore'), '.codex-spec/\n');
   const before = await snapshot(root, feature);
   assert.equal((await verify(root, feature)).status, 'verified');
@@ -180,7 +149,7 @@ test('ignored contracts are still fingerprinted; generated evidence is excluded'
   assert.equal(before.sha256, after.sha256);
   await fs.appendFile(evidence, '\n');
   assert.equal((await status(root, feature)).status, 'verified');
-  await fs.appendFile(acceptance, '\n');
+  await fs.appendFile(spec, '\n');
   assert.equal((await status(root, feature)).status, 'stale');
 });
 
@@ -193,12 +162,12 @@ test('checks that modify source invalidate their own evidence', async t => {
 });
 
 test('a malformed new run invalidates an earlier passing receipt', async t => {
-  const { root, acceptance, evidence } = await fixture(t);
+  const { root, spec, evidence } = await fixture(t);
   await verify(root, feature);
-  await fs.writeFile(acceptance, '{invalid');
+  await fs.writeFile(spec, '# Missing acceptance criteria');
   assert.equal((await verify(root, feature)).status, 'invalid');
   assert.equal(JSON.parse(await fs.readFile(evidence)).status, 'invalid');
-  await fs.writeFile(acceptance, JSON.stringify(contract()));
+  await fs.writeFile(spec, contract());
   assert.equal((await status(root, feature)).status, 'invalid');
 });
 
@@ -230,14 +199,14 @@ test('concurrent verification is rejected without replacing evidence', async t =
 });
 
 test('metadata symlinks and escaping check directories are rejected', async t => {
-  const { root, directory, acceptance } = await fixture(t);
+  const { root, directory, spec } = await fixture(t);
   await fs.symlink(os.tmpdir(), path.join(root, 'outside'));
-  const value = contract(); value.checks[0].cwd = 'outside';
-  await fs.writeFile(acceptance, JSON.stringify(value));
+  const value = contract({ ...nodeCheck(), cwd: 'outside' });
+  await fs.writeFile(spec, value);
   assert.equal((await verify(root, feature)).status, 'invalid');
-  await fs.unlink(acceptance);
-  await fs.writeFile(path.join(root, 'external.json'), JSON.stringify(contract()));
-  await fs.symlink(path.join(root, 'external.json'), acceptance);
+  await fs.unlink(spec);
+  await fs.writeFile(path.join(root, 'external.md'), contract());
+  await fs.symlink(path.join(root, 'external.md'), spec);
   assert.equal((await status(root, feature)).status, 'invalid');
   await fs.rm(directory, { recursive: true });
   await fs.symlink(os.tmpdir(), directory);
@@ -260,4 +229,37 @@ test('submodules fail closed instead of producing partial fingerprints', async t
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   execFileSync('git', ['update-index', '--add', '--cacheinfo', '160000,' + head + ',submodule'], { cwd: root });
   assert.equal((await verify(root, feature)).status, 'invalid');
+});
+
+test('a missing check or malformed later directive prevents all command execution', async t => {
+  const command = nodeCheck('require("node:fs").writeFileSync("should-not-run", "bad")');
+  const { root, spec } = await fixture(t, contract(command) + '\n### Unfinished outcome\nA required outcome.\n');
+  const blocked = await verify(root, feature);
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.criteria[1].status, 'unverified');
+  assert.deepEqual(blocked.checks, []);
+  await assert.rejects(fs.stat(path.join(root, 'should-not-run')), /ENOENT/);
+  await fs.writeFile(spec, contract(command) + '\nVerfy: `npm test`\n');
+  assert.equal((await verify(root, feature)).status, 'invalid');
+  await assert.rejects(fs.stat(path.join(root, 'should-not-run')), /ENOENT/);
+});
+
+test('multiple criteria share one check receipt without repeated execution', async t => {
+  const { root } = await fixture(t, contract() + '\n### Another outcome\nVerify: `' +
+    commandLine(nodeCheck().argv) + '`\n');
+  const result = await verify(root, feature);
+  assert.equal(result.status, 'verified');
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.criteria.length, 2);
+  assert.deepEqual(result.criteria[0].checks, result.criteria[1].checks);
+});
+
+test('quoted commands execute in the specified relative directory', async t => {
+  const { root, spec } = await fixture(t);
+  await fs.mkdir(path.join(root, 'web app'));
+  await fs.writeFile(spec, contract({ ...nodeCheck('console.log(process.cwd())'), cwd: 'web app', timeoutMs: 30000 }));
+  const result = await verify(root, feature);
+  assert.equal(result.status, 'verified');
+  assert.equal(result.checks[0].stdout.trim(), path.join(root, 'web app'));
+  assert.equal(result.checks[0].timeoutMs, 30000);
 });

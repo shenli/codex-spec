@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 
+import { specForCheck } from './helpers.js';
+
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 const skill = fileURLToPath(new URL('../.agents/skills/spec-driven-development/', import.meta.url));
 const run = (cwd, args, entry = cli) => spawnSync(process.execPath, [entry, ...args], { cwd, encoding: 'utf8' });
@@ -23,16 +25,13 @@ test('CLI gives actionable errors and propagates verification exit codes', async
   assert.equal(run(root, ['status', 'example']).status, 1);
   assert.equal(run(root, ['verify', 'example']).status, 1);
   const directory = path.join(root, '.codex-spec/features/example');
-  await fs.writeFile(path.join(directory, 'acceptance.json'), JSON.stringify({
-    schemaVersion: 1, feature: 'example', state: 'ready',
-    criteria: [{ id: 'AC-1', description: 'Node executes', checks: ['node'] }],
-    checks: [{ id: 'node', argv: [process.execPath, '-e', 'process.exit(0)'] }]
-  }));
+  assert.deepEqual((await fs.readdir(directory)).sort(), ['evidence.json', 'spec.md']);
+  await fs.writeFile(path.join(directory, 'spec.md'), specForCheck({ argv: [process.execPath, '-e', 'process.exit(0)'] }));
   assert.equal(run(root, ['verify', 'example']).status, 0);
   assert.equal(run(root, ['status', 'example']).status, 0);
   await fs.writeFile(path.join(root, 'change.txt'), 'change');
   assert.equal(run(root, ['status', 'example']).status, 1);
-  await fs.writeFile(path.join(directory, 'acceptance.json'), 'bad json');
+  await fs.writeFile(path.join(directory, 'spec.md'), '# Missing criteria');
   assert.equal(run(root, ['verify', 'example']).status, 2);
 });
 

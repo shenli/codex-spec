@@ -18,7 +18,7 @@ This redesign does not depend on the feedback's particular platform announcement
 
 **Skill first.** One self-contained skill owns contract refinement, native implementation, verification, and evidence handoff. Its scripts use Node built-ins. The optional npm command is a thin entry point into the exact same helper. No model pin, SDK dependency, credentials, context manager, or session scheduler is needed.
 
-**A small contract.** `spec.md` records intent and constraints; `acceptance.json` maps observable criterion IDs to checks or manual review. JSON avoids YAML dependencies and coercion ambiguity. Strict runtime validation rejects typos, orphan checks, unknown references, and empty coverage. `draft` is nonpassing by construction.
+**One readable contract.** Developers edit only `spec.md`: acceptance headings, prose, and inline-code Verify commands or Review procedures. A deterministic parser generates IDs and mappings in memory; there is no second authored or cached contract. A narrow command-line lexer supports quotes without an implicit shell. Duplicate titles, malformed directives, and shell operators are rejected. Missing checks block all execution, and manual review remains nonpassing. Evidence schema version 2 binds results to the exact Markdown bytes.
 
 **Evidence before status.** Check exit codes are evidence for the explicitly mapped tests, not evidence that an agent finished a task. All required automated checks must pass; manual review remains unresolved. Code/spec hashes bind a receipt to evaluated inputs. Status derives and validates the result, then compares current inputs.
 

@@ -28,8 +28,7 @@ This creates:
 
 ```text
 .codex-spec/features/rate-limiter/
-  spec.md            Intent, scope, constraints, design decisions
-  acceptance.json    Criterion IDs mapped to commands or manual review
+  spec.md            Intent, constraints, acceptance criteria, and checks
   evidence.json      Written only when verification runs
 ```
 
@@ -49,7 +48,7 @@ codex exec --sandbox workspace-write \
 
 Codex handles its own authentication, model configuration, permissions, and context. codex-spec does not launch another agent or manage sessions.
 
-After defining concrete criteria, change `state` from `draft` to `ready` in `acceptance.json`. That is a contract readiness marker, not a record of human approval. Run:
+Edit `spec.md` to describe each acceptance criterion and its verification command. Then run:
 
 ```bash
 node src/cli.js verify rate-limiter
@@ -60,39 +59,28 @@ Both commands print JSON. Verification executes the commands in the contract, so
 
 ## A contract example
 
-```json
-{
-  "schemaVersion": 1,
-  "feature": "rate-limiter",
-  "state": "ready",
-  "criteria": [
-    {
-      "id": "AC-1",
-      "description": "The first 100 requests succeed; request 101 returns 429.",
-      "checks": ["rate-limit-tests"]
-    },
-    {
-      "id": "AC-2",
-      "description": "Existing API behavior remains compatible.",
-      "checks": ["regression"]
-    }
-  ],
-  "checks": [
-    {
-      "id": "rate-limit-tests",
-      "argv": ["node", "--test", "test/rate-limit.test.js"],
-      "timeoutMs": 30000
-    },
-    {
-      "id": "regression",
-      "argv": ["npm", "test"],
-      "timeoutMs": 120000
-    }
-  ]
-}
+```markdown
+# Rate limiter
+
+Limit each API client to 100 requests per minute.
+
+## Acceptance criteria
+
+### Request limit
+The first 100 requests succeed.
+Request 101 within the same minute returns HTTP 429.
+
+Verify: `node --test test/rate-limit.test.js`
+
+### Compatibility
+Existing API behavior remains compatible.
+
+Verify: `npm test`
 ```
 
-Commands are argument arrays, executed without an implicit shell from the repository root (or a validated relative `cwd`). Every check must map to a criterion; every criterion needs checks or a specific manual review procedure. A manual criterion uses `"manual": "Review procedure"` instead of `checks` and keeps the overall gate blocked. Human approval belongs in the project's review system; the runner never invents it.
+This is the whole contract. There are no IDs, argument arrays, readiness flags, or second files to maintain. The verifier reads Markdown directly and generates its internal mappings and evidence.
+
+Use one `Verify:` line per command. Commands support ordinary quoting and run without an implicit shell. Identical commands are run once. If a criterion has no command, verification stays blocked until you add one. For human acceptance, use `Review:` followed by a specific procedure; manual review keeps the automated gate blocked.
 
 See the [contract and evidence reference](.agents/skills/spec-driven-development/references/contracts.md) for the full format and limits.
 
@@ -116,7 +104,7 @@ No global install is required. The skill is self-contained. If you prefer the sh
 | --- | --- | --- |
 | `verified` | Every declared automated criterion passed; inputs stayed unchanged | 0 |
 | `failed` | A check failed, timed out, was interrupted, or could not start | 1 |
-| `blocked` | Draft contract, manual review outstanding, or active verification lock | 1 |
+| `blocked` | Missing check/review, manual review outstanding, or active verification lock | 1 |
 | `stale` | Code, HEAD, or contract no longer matches the tested inputs | 1 |
 | `unverified` | No evidence exists | 1 |
 | `invalid` | Invalid contract/evidence or verification infrastructure error | 2 |

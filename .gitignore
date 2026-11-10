@@ -1,5 +1,5 @@
 node_modules/
+.build/
 *.tgz
+.codex-spec/evidence/
 .codex-spec/.verify.lock/
-.codex-spec/features/*/evidence.json
-.codex-spec/features/*/evidence.json.*.tmp

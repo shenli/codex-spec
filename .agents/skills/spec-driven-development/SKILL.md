@@ -1,38 +1,57 @@
 ---
 name: spec-driven-development
-description: Define reviewable spec contracts and verify feature, bug, refactor, or performance changes against explicit acceptance criteria using codex-spec. Use for spec-driven work or existing .codex-spec features.
+description: Define readable acceptance specs and verify coding changes with codex-spec. Use when the user requests spec-driven development, acceptance evidence, regression baselines, or work on an existing .codex-spec feature.
 ---
 
 # Spec-driven development
 
-Let Codex choose the implementation approach. Use the contract to define the outcome and the verifier to collect evidence.
+Help the developer decide what counts as done, then implement and verify the change using the current Codex session.
 
-## Contract
+## Start with the project
 
-Use one feature directory at `.codex-spec/features/<slug>/` with `spec.md` as the only hand-edited contract. Reuse an existing contract when it matches the request. Keep small tasks small; do not invent phases, task graphs, or mandatory design approvals.
+1. Read the applicable AGENTS.md instructions and explore the relevant code and existing tests.
+2. Find an existing feature under `.codex-spec/features/`, or choose a short lowercase hyphenated name.
+3. Use the executable shipped beside this skill: `scripts/codex-spec.mjs`. Resolve it relative to this SKILL.md, and run it with the target Git project as the working directory. In a repository-local installation the command is `node .agents/skills/spec-driven-development/scripts/codex-spec.mjs`.
+4. Read [contract syntax](references/contracts.md) when drafting or changing criteria.
 
-The helper is `scripts/codex-spec.mjs` relative to this skill directory. From the repository root, invoke it with Node.js (22+):
+## Define the outcome
 
-```bash
-node <skill-directory>/scripts/codex-spec.mjs spec <slug> "<intent>"
-```
+Create `spec <feature> "<intent>"` when necessary, then edit the generated spec.md. State the problem, relevant constraints, and concrete acceptance outcomes. Keep a small change small; do not generate a separate requirements/plan/tasks document chain.
 
-Read [contracts.md](references/contracts.md) when authoring a contract or interpreting evidence. Convert the intent into observable criteria under `## Acceptance criteria`. Give each a unique `###` heading and put a `Verify:` inline-code command or a `Review:` procedure directly beneath it. The helper generates IDs and mappings; do not author a second machine-readable contract. Include relevant regressions and constraints; use manual criteria for outcomes that cannot be established by commands. For performance work, have a check enforce a threshold under a documented workload instead of merely printing a measurement.
+Give each criterion a `###` heading under `## Acceptance criteria`. Add `Verify:` with an actual project command, `Review:` with a human review procedure, or both.
 
-Resolve material ambiguity using repository evidence and the user's instructions. Record assumptions and design decisions in `spec.md`. Honor approval requirements already established by the user or project; do not add a new approval round solely because this skill is active. Ensure every criterion has a concrete command or review procedure; readiness is derived automatically.
+Inspect the assertions behind each command. A broad test suite or a process that prints "done" is not sufficient evidence for a specific behavior. Add focused tests for boundaries, failure modes, compatibility, or performance budgets as appropriate. Keep manual decisions explicit.
 
-## Implementation
+Run `check <feature>` to validate and preview the commands. Review executable commands before running a contract from an unfamiliar source.
 
-Read `AGENTS.md` and task-relevant documentation. Plan to the level needed by the change and use native Codex tools to implement it. Do not generate a second context hierarchy or force a separate session for each task.
+If a material requirement is ambiguous, ask a focused question while continuing independent discovery. Do not invent a requirement or approval.
 
-Keep the intended acceptance criteria intact while fixing the code. If scope genuinely changes, update the contract explicitly and explain the changed expectation. Do not weaken tests or silently remove failing criteria to obtain a pass.
+## Establish evidence, then implement
 
-## Verification and handoff
+For a bug or measurable optimization, run `verify <feature> --baseline` after adding the relevant test but before changing the implementation. Inspect why it fails. Missing tools, crashes, and timeouts are not evidence that a regression test detects the intended bug.
 
-Run the helper's `verify <slug>` command on macOS/Linux after implementation. Checks run as local subprocesses with the current user's permissions and environment; review the declared commands before running them. The helper itself needs no API key.
+Use Codex's available planning, editing, and execution tools to implement the change. Follow the project's existing architecture and constraints.
 
-Inspect failing check output, fix the cause within the authorized scope, and rerun verification. Stop to report a blocker when repair needs a decision, unavailable dependency, or work outside the agreed scope. Never substitute an agent's narrative for a check result.
+Run `verify <feature>`. Inspect failures, repair the implementation, and verify again. Do not weaken assertions or acceptance criteria just to obtain a pass. When a legitimate requirement changes, explain it and update the spec openly.
 
-Use `status <slug>` immediately before the handoff to check that evidence still matches the workspace. If code or the contract changed, rerun verification. Do not hand-edit evidence.
+Use `--json` when machine-readable results help. Progress is on stderr. Exit 1 can mean pending review or stale evidence as well as test failure; inspect the separate dimensions before deciding what to do next.
 
-Report the change, criterion results, evidence path, and any remaining manual review or limitations. Distinguish implemented-but-unverified work from verified automated acceptance. A `verified` result is not human approval or authorization to merge, publish, or deploy. For manual criteria, surface the specific review procedure and leave the gate blocked; the runner cannot attest a human decision.
+## Review and hand off
+
+Use `status <feature>` after the final edits and `report <feature>` for a shareable summary. Report:
+- which outcomes have automated evidence;
+- what changed and which tests ran;
+- any pending human review or remaining failures;
+- the evidence path and important limits of the checks.
+
+A baseline comparison only establishes that the same declared command failed before and passes now. Inspect changes to the test assertions too.
+
+Never fabricate a human review or use an agent name as a substitute for the requested reviewer. Record `review` only when the user has explicitly supplied or authorized that person's completed decision and its reference. It is a local declaration, not authenticated identity.
+
+Do not call the change accepted while required review is pending, evidence is stale, or any criterion lacks a check/review mapping. If the process was interrupted, rerun verification; do not recover a pass by editing evidence.
+
+## Boundaries
+
+The verifier executes local commands with the session's permissions. It is not a sandbox, CI service, model client, or proof of correctness. It fingerprints source inputs and records check results; ignored dependencies, external services, and a malicious writer remain outside its trust boundary.
+
+Use `--gate checks` for automated CI checks when human approval is handled separately by the project's PR system.

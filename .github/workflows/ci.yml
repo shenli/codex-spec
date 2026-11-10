@@ -5,6 +5,7 @@ permissions:
 jobs:
   verify:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: [22, 24]
@@ -14,13 +15,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run check
-      - run: node src/cli.js verify verification-gate
+      - run: npm run check:bundle
+      - run: node bin/codex-spec.mjs verify verification-gate
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: verification-${{ matrix.os }}-${{ matrix.node }}
-          path: .codex-spec/features/verification-gate/evidence.json
+          path: .codex-spec/evidence/verification-gate/
           include-hidden-files: true
           if-no-files-found: warn

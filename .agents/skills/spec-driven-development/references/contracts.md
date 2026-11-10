@@ -1,161 +1,105 @@
-# Writing and verifying specs
+# Writing acceptance specs
 
-## Write one Markdown file
+The only hand-edited contract is `.codex-spec/features/<feature>/spec.md`. Feature names use lowercase letters, digits, and hyphens, up to 80 characters.
 
-The only hand-edited contract is `.codex-spec/features/<slug>/spec.md`.
-Describe intent, constraints, and non-goals in normal Markdown. Put observable
-outcomes under `## Acceptance criteria`, with a unique `###` heading for each
-criterion and its verification command directly below it.
+## Minimal example
 
-```markdown
-# Rate limiter
+```md
+# Correct the rate-limit boundary
 
-Limit each API client to 100 requests per minute.
+The 100th request is currently rejected. Allow requests 1 through 100.
+
+## Constraints
+
+Preserve the API and client identification rules.
 
 ## Acceptance criteria
 
-### Request limit
-The first 100 requests succeed.
-Request 101 within the same minute returns HTTP 429.
+### Accept exactly 100 requests
 
-Verify: `node --test test/rate-limit.test.js`
+Verify: `node --test test/rate-limit.test.mjs`
 
-### Compatibility
-Existing API behavior remains compatible.
+### Preserve compatibility
 
 Verify: `npm test`
 ```
 
-No IDs, JSON, schema version, cross-references, or readiness flag are required.
-The verifier compiles the Markdown in memory and generates the IDs and mappings
-recorded in evidence. Criterion IDs are derived from their titles and survive
-reordering; renaming a title changes its ID. Identical commands with identical
-options are run once and their results support each referencing criterion.
+The executable does not create these test files. Add assertions that establish the stated outcome.
 
-Scaffold a feature with `node <skill-directory>/scripts/codex-spec.mjs spec <slug> "<intent>"`.
-It creates only spec.md, with an incomplete criterion. Existing directories are
-never overwritten. Slugs contain lowercase letters, numbers, and single hyphens,
-up to 80 characters. Add real checks before verification can pass.
+## Syntax
 
-## Checks and review
+- Use one H2 heading named `Acceptance criteria` or `Acceptance` (case-insensitive).
+- Use a unique H3 heading for each criterion.
+- Ordinary paragraphs describe the expected behavior.
+- `Verify:` takes exactly one inline-code command. Repeat it for multiple checks.
+- `Review:` describes a human procedure. It can accompany automated checks.
+- `Directory:` optionally sets a repository-relative working directory for all checks in that criterion.
+- `Timeout:` optionally sets their timeout, from `1ms` to `10m`. The default is `2m`.
+- Bulleted directives and an emphasized label such as `**Verify:**` are supported.
+- Fenced examples, blockquotes, and HTML comments do not declare checks.
+- A criterion with neither Verify nor Review remains incomplete and blocks execution.
+- Unknown directive-like labels are errors, catching misspellings such as Verfy. Given, When, Then, Note, and Notes are permitted prose labels.
 
-Write one `Verify:` line per command, using an inline Markdown code span.
-Several Verify lines under one criterion must all pass. Commands default to the
-repository root and a two-minute timeout. Optional settings apply to all commands
-in that criterion:
+For example:
 
-```markdown
-### Web regression
-Existing browser behavior remains compatible.
+```md
+### Keyboard navigation
 
-Verify: `npm test`
-Verify: `npm run lint`
+Tab moves through all interactive controls in the expected order.
+
+Verify: `npm run test:a11y`
+Review: Navigate the settings screen using only the keyboard.
+
 Directory: web
 Timeout: 30s
 ```
 
-`Directory:` is a plain relative path (spaces are allowed); it must stay inside
-the repository and cannot traverse symlinks. `Timeout:` accepts an integer with
-`ms`, `s`, or `m`, from 1ms through 10m.
+Directory and Timeout require at least one Verify command. Keep free-form design notes outside the acceptance section when they do not describe a criterion.
 
-For human acceptance, use `Review:` followed by a concrete procedure:
+## Commands
 
-```markdown
-### API design
-The public interface is acceptable to the maintainer.
+Commands are parsed into executable arguments and spawned directly, without an implicit shell.
 
-Review: Inspect the public API diff and record the decision in the PR.
+```md
+Verify: `node --test "test/rate limit.test.mjs"`
 ```
 
-Use separate criteria for commands and manual review. Manual criteria always keep
-the overall automated gate blocked, even after someone approves externally; the
-runner cannot attest a human identity or decision. Never remove a required review
-criterion just to make the gate green.
+Quotes preserve spaces. Pipes, redirections, shell operators, wildcard expansion, environment expansion, and unfinished quotes are rejected. Put complex setup in a reviewed project script, then name that script:
 
-A criterion without Verify or Review keeps the entire spec blocked and prevents
-commands from running. Missing acceptance sections, duplicate titles, mixed
-Verify/Review, empty directives, misspelled directive labels, and invalid commands
-are errors with file/line diagnostics. There is no manual draft-to-ready step.
-
-Use one Acceptance criteria section and up to 128 uniquely named criteria, with
-at most 64 distinct commands. Inside it, use level-three headings for criteria;
-nested headings are rejected. Keep Verify/Review/Directory/Timeout directives on
-their own unindented lines. Other `Label:` lines in this section are rejected to
-catch typos; write descriptions as prose instead. Fenced examples, indented code,
-and HTML comments are never treated as executable directives.
-
-## Command syntax
-
-Commands are split into argument arrays and run without an implicit shell.
-Single/double quotes and escaped spaces work:
-
-```markdown
-Verify: `node --test "test/rate limit.test.js"`
+```md
+Verify: `npm run test:integration`
 ```
 
-Pipes, redirection, chaining, environment assignments, and shell expansion are
-rejected. Put complex setup in a test script or package script and invoke that
-script. Wildcards are passed literally to the executable; there is no shell glob
-expansion. Inside single quotes, shell characters are literal. A command with
-literal backticks needs a longer Markdown backtick delimiter. An explicitly
-invoked shell script still runs as code and should be reviewed.
+A script may itself invoke a shell. Direct spawning is a predictable argument interface, not a security boundary. Checks inherit the local environment. Do not run commands from an untrusted spec without inspection.
 
-Review that each command actually asserts its criterion. Benchmarks must exit
-nonzero when a threshold is missed, and test runners must fail when a required
-test set is missing.
+Identical argument lists, working directories, and timeouts share one execution across criteria. Different timeouts or directories are separate checks. There is a limit of 128 criteria and 64 distinct checks per spec.
 
-## Run and interpret verification
+## Useful criteria
 
-Run the helper from anywhere in the target Git working tree. It finds the
-repository root. `verify <slug>` parses the spec, fingerprints the workspace,
-runs checks sequentially, fingerprints again, and writes `evidence.json`.
-`status <slug>` validates that evidence against the current spec and workspace
-without executing commands.
+**Bug:** write the failing boundary or regression case first, capture a baseline, fix the implementation, rerun the same test.
 
-| Result | Meaning |
-| --- | --- |
-| `verified` | All criteria are automated; all checks passed against unchanged inputs |
-| `failed` | A check failed, could not start, timed out, or was cancelled |
-| `blocked` | A criterion lacks a check/review, manual review remains, or a run is locked |
-| `stale` | Inputs changed since or during verification |
-| `unverified` | No evidence exists |
-| `invalid` | Parsing, validation, incomplete evidence, or infrastructure error |
+**Refactor:** run compatibility tests before and after. Add Review for readability or architecture decisions that tests cannot establish.
 
-Verify/status exit 0 only for verified, 1 for other valid nonpassing outcomes,
-and 2 for invalid/error. A new run invalidates the prior receipt before checking.
-Interrupted runs cannot pass. Human approval and release authorization remain
-separate from automated verification.
+**Performance:** declare a measurable budget and controlled workload. Prefer deterministic work counters for algorithmic tests; use an appropriate benchmark harness for latency or memory. Record the environment and variability when interpreting measurements.
 
-## Generated evidence
+Avoid criteria like "all tests pass" as the entire requirement. Describe the behavior the tests are intended to establish.
 
-Evidence schema version 2 records the feature, run ID, runner/runtime versions,
-timestamps, exact spec SHA-256, before/after workspace fingerprints, and criterion
-titles/descriptions with generated check mappings. Check results contain exact
-arguments, cwd, timeout, duration, exit code, signal, abort/timeout flags, startup
-errors, stdout/stderr, and truncation status. Each output stream keeps at most the
-first 64 KiB. Failures before parsing may lack inputs/workspace.
+## Review and evidence
 
-Evidence is replaced atomically; do not edit it. Archive receipts externally for
-history and inspect check output before sharing. Generated receipts are excluded
-from their own fingerprint.
+`verify` records a new run. The default acceptance gate requires:
+1. every criterion has a Verify and/or Review mapping;
+2. all declared commands pass;
+3. evidence matches the current spec, workspace, runtime, and verifier;
+4. required human review is explicitly approved for that run.
 
-The fingerprint covers HEAD, tracked and nonignored untracked working-tree files,
-paths, executable bits, and symlink targets. The current spec is included even
-when ignored. Submodules are rejected. Ignored dependencies/build output,
-environment, services, external symlink contents, and edits reverted between
-snapshots are not attested. Receipts are unsigned; checks use normal local
-permissions. Use pinned dependencies and isolated CI when needed.
+`--gate checks` requires at least one passing automated check and complete mappings, but can succeed while review is pending. A baseline never satisfies either gate.
 
-Verification supports macOS/Linux. It closes stdin and kills subprocess groups
-on timeout/cancellation; detached processes outside the group are not supervised.
-Only one run is allowed per repository. After a crash, confirm that the process
-in `.codex-spec/.verify.lock/owner.json` has stopped before removing that lock and
-rerunning. Do not remove a live run's lock.
+Record a completed human decision with:
 
-Suggested ignore rules:
-
-```gitignore
-.codex-spec/.verify.lock/
-.codex-spec/features/*/evidence.json
-.codex-spec/features/*/evidence.json.*.tmp
+```sh
+codex-spec review rate-limiter --decision approve --reviewer "Alex" --note "PR #42 review"
 ```
+
+Use `reject` to record requested changes. This is a local statement bound to the run, not authenticated identity. A new run clears its applicability; changed source makes approval stale.
+
+The generated evidence directory is ignored. Never hand-edit it to change a result. Export the report or upload the evidence directory for review. Logs can contain application output; inspect them before sharing.

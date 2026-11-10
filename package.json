@@ -1,29 +1,45 @@
 {
   "name": "codex-spec",
   "version": "2.0.0",
-  "description": "Codex-native spec-driven development with readable Markdown contracts and verification evidence.",
+  "description": "A Codex development companion: readable specs, reproducible checks, and reviewable acceptance evidence.",
   "type": "module",
   "bin": {
-    "codex-spec": "src/cli.js"
+    "codex-spec": "bin/codex-spec.mjs"
   },
   "files": [
-    "src/",
+    "bin/",
     ".agents/skills/spec-driven-development/",
     "docs/",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "scripts/demo.mjs",
+    "examples/",
     "DEMO.md",
-    "scripts/demo.mjs"
+    "AGENTS.md"
   ],
   "scripts": {
-    "start": "node src/cli.js",
-    "test": "node --test test/*.test.js",
-    "check": "node --check src/cli.js && node --test test/*.test.js"
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "npm run typecheck && npm test",
+    "check:bundle": "node scripts/build.mjs --check",
+    "demo": "node scripts/demo.mjs",
+    "prepack": "npm run build",
+    "test:package": "node scripts/smoke-package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "marked": "18.2.0",
+    "shell-quote": "1.12.0",
+    "typescript": "6.0.3",
+    "zod": "4.6.7"
   },
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shenli/codex-spec.git"

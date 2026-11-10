@@ -1,38 +1,32 @@
+#!/usr/bin/env node
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-spec-demo-'));
-const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
-function run(args, expectedExit) {
-  const result = spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: 'utf8' });
-  assert.equal(result.status, expectedExit, result.stderr || result.stdout);
-  return JSON.parse(result.stdout);
+import { spawnSync, execFileSync } from 'node:child_process';
+import { workflows, workflowSpec } from '../examples/workflows.mjs';
+const tool=fileURLToPath(new URL('../bin/codex-spec.mjs',import.meta.url));
+const names=process.argv[2]?[process.argv[2]]:Object.keys(workflows);
+for(const name of names){
+  const w=workflows[name];if(!w)throw Error('Choose bug, refactor, or performance');
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'codex-spec-'+name+'-')));
+  const run=(args,expected)=>{
+    const r=spawnSync(process.execPath,[tool,...args],{cwd:root,encoding:'utf8'});
+    process.stdout.write(r.stdout);process.stderr.write(r.stderr);
+    if(r.status!==expected)throw Error(args.join(' ')+' returned '+r.status);
+  };
+  execFileSync('git',['init','-q'],{cwd:root});
+  await fs.mkdir(path.join(root,'.codex-spec/features',name),{recursive:true});
+  await fs.writeFile(path.join(root,'.gitignore'),'.codex-spec/evidence/\n.codex-spec/.verify.lock/\n');
+  await fs.writeFile(path.join(root,'.codex-spec/features',name,'spec.md'),workflowSpec(w));
+  await fs.writeFile(path.join(root,'implementation.mjs'),w.before);
+  await fs.writeFile(path.join(root,'acceptance.mjs'),w.test);
+  console.log('\n'+name.toUpperCase()+' — '+root+'\nBefore the change:');
+  run(['verify',name,'--baseline'],1);
+  await fs.writeFile(path.join(root,'implementation.mjs'),w.after);
+  console.log('\nAfter the change:');
+  run(['verify',name],w.review?1:0);
+  console.log('\nRun history:');
+  run(['history',name],0);
+  console.log('\nEvidence and source are retained in '+root);
 }
-execFileSync('git', ['init', '-q', root]);
-run(['spec', 'double', 'Double a number without changing its sign'], 0);
-await fs.writeFile(path.join(root, 'double.cjs'), 'module.exports = n => n + 1;\n');
-await fs.writeFile(path.join(root, 'double.test.cjs'),
-  'const test = require("node:test"); const assert = require("node:assert/strict");\n' +
-  'const double = require("./double.cjs");\n' +
-  'test("doubles positive, negative, and zero values", () => {\n' +
-  '  assert.equal(double(2), 4); assert.equal(double(-3), -6); assert.equal(double(0), 0);\n});\n');
-await fs.writeFile(path.join(root, '.codex-spec/features/double/spec.md'),
-'# Double a number\n\n## Acceptance criteria\n\n### Correct results\nDouble positive, negative, and zero values.\n\n' +
-'Verify: `node --test double.test.cjs`\nTimeout: 10s\n');
-const failed = run(['verify', 'double'], 1);
-assert.equal(failed.status, 'failed');
-await fs.writeFile(path.join(root, 'double.cjs'), 'module.exports = n => n * 2;\n');
-const verified = run(['verify', 'double'], 0);
-assert.equal(verified.status, 'verified');
-assert.equal(run(['status', 'double'], 0).status, 'verified');
-await fs.appendFile(path.join(root, 'double.cjs'), '// A later change requires another run.\n');
-const stale = run(['status', 'double'], 1);
-assert.equal(stale.status, 'stale');
-console.log(JSON.stringify({
-  results: [failed.status, verified.status, stale.status], directory: root,
-  evidence: path.join(root, '.codex-spec/features/double/evidence.json')
-}, null, 2));

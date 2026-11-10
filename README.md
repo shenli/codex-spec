@@ -1,10 +1,12 @@
 # codex-spec
 
+A coding agent can report success while the requested behavior is missing, tests were never run, or an existing feature regressed. Even a passing test result can become outdated after the next edit. Developers need an explicit definition of done and evidence that the current code meets it.
+
 **Codex implements the change. codex-spec defines and checks what “done” means.**
 
-A Codex-native skill with readable Markdown contracts and a dependency-free verification runner. Use it for features, bugs, refactors, and performance work where acceptance evidence matters.
+codex-spec is a Codex-native skill with readable Markdown specs and a dependency-free verification runner. Keep the requirements and acceptance checks together in `spec.md`, let Codex implement the change, and collect results tied to the spec and code that were tested. If either changes, the verifier detects that the evidence is stale.
 
-This is the **v2 source tree**, a clean redesign around acceptance verification. Use this checkout or copy its skill directory; these instructions do not assume a v2 npm release exists.
+Use it for features, bug fixes, refactors, and performance work where “the agent finished” is not enough to accept a change.
 
 ## What it does
 
@@ -12,7 +14,7 @@ This is the **v2 source tree**, a clean redesign around acceptance verification.
 2. **Implement:** let Codex explore, plan, edit, and iterate using its native tools.
 3. **Verify:** run explicit checks and associate their results with criteria and a fingerprint of the code and contract.
 
-A successful Codex run means implementation was attempted. Only passing acceptance checks against an unchanged workspace produce `verified`. That label describes automated acceptance coverage, not proof of correctness or permission to merge.
+Only passing acceptance checks against an unchanged workspace produce `verified`. That label describes automated acceptance coverage, not proof of correctness or permission to merge.
 
 ## Quickstart
 

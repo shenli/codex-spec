@@ -1,60 +1,22 @@
 # codex-spec
 
-**Codex can finish a coding task without proving that it meets your requirements.** Tests may miss the behavior you asked for, a passing result may belong to an older revision, and a design decision may still need your review.
+**Define done. Verify the change.**
 
-codex-spec gives you and Codex a shared definition of done: a readable Markdown spec, explicit acceptance checks, and evidence tied to the code that was checked.
+Codex can finish a coding task while important questions remain: do the tests cover the requested behavior, do the results match the latest code, and does anything still need human review?
 
-Write what should be true. Let Codex implement it. Verify the outcomes and review what still needs human judgment.
+codex-spec gives you and Codex a shared definition of done. Write acceptance criteria in Markdown, connect them to checks or review procedures, and collect evidence tied to the code that was checked.
 
-## What you get
+It combines a **Codex skill** that guides the development work with a **local verifier** that records results and shows what remains before acceptance. Codex handles exploration, planning, implementation, and repair.
 
-- **One editable spec.** Ordinary Markdown with a command or review procedure beneath each acceptance criterion.
-- **A Codex skill.** Guides discovery, implementation, regression checks, and repair using the tools already available in your Codex session.
-- **Evidence that expires.** Changes to the spec, workspace, verifier, or Node runtime make earlier results stale.
-- **Separate answers.** See automated checks, evidence freshness, and human review independently.
-- **Before/after results.** Capture a failing baseline for a bug or performance change, then compare the declared checks after implementation.
-- **Reviewable history.** Retain run records and export a Markdown report for a pull request.
+## A spec you can read and edit
 
-No model configuration, API key, or agent service is required. The verifier runs locally; Codex handles the coding.
-
-## Try it
-
-Requires Git and Node.js 22 or later. Verification supports macOS and Linux; use Linux/WSL for Windows.
-
-Clone this repository and link the checked-in, self-contained executable:
-
-```sh
-git clone https://github.com/shenli/codex-spec.git
-cd codex-spec
-npm link
-```
-
-In the project you want to work on:
-
-```sh
-codex-spec init
-```
-
-This installs the skill under `.agents/skills/spec-driven-development/` and adds ignore rules for generated evidence. It preserves your `AGENTS.md` and refuses to overwrite an edited skill.
-
-Then ask Codex:
-
-> Use $spec-driven-development to fix the rate limiter. The first 100 requests must succeed; request 101 must return 429. Capture the failing case before changing the implementation.
-
-The skill helps turn the request into a spec, select meaningful checks, implement the change, and verify it. You can also run every step yourself.
-
-## A spec you can edit
-
-`.codex-spec/features/rate-limiter/spec.md`:
+Keep the intent, constraints, and acceptance criteria together in `.codex-spec/features/rate-limiter/spec.md`:
 
 ```md
 # Rate limiter
 
 Limit each client to 100 requests per minute.
-
-## Constraints
-
-Keep the existing API and response format.
+Preserve the existing API and response format.
 
 ## Acceptance criteria
 
@@ -68,22 +30,62 @@ Verify: `node --test test/rate-limit.test.mjs`
 
 Verify: `npm test`
 
-### Explain rejected requests clearly
+### Make retry guidance clear
 
-Review: Inspect the 429 response and confirm that the retry guidance is actionable.
+Review: Inspect the 429 response and confirm that it explains when to retry.
 ```
 
-The test files and scripts must exist in your project. The spec names the checks; it does not generate a test or prove that its assertions are sufficient.
+A criterion can have checks, a human review procedure, or both. Shared commands run once. IDs and mappings are generated for you.
 
-A criterion can have both `Verify:` and `Review:`. Commands shared by several criteria run once. IDs and mappings are generated internally—you never maintain a parallel JSON contract.
+After verification, the result makes the remaining work explicit:
 
-[Contract syntax and examples](.agents/skills/spec-driven-development/references/contracts.md)
+```text
+rate-limiter — NEEDS-REVIEW
+Checks: passed  |  Evidence: current  |  Review: pending
+  Enforce the request limit: checks passed
+  Preserve existing API behavior: checks passed
+  Make retry guidance clear: no automated check; review pending
+```
 
-## The development loop
+The test files and scripts must exist in your project and assert the behavior you need. The verifier runs those checks; the skill helps Codex choose and write them.
+
+[Full contract syntax](.agents/skills/spec-driven-development/references/contracts.md)
+
+## Get started
+
+Requires **Git and Node.js 22+**. Verification runs on macOS and Linux; use Linux/WSL on Windows. No API key, model configuration, or separate agent service is required by codex-spec.
+
+Clone the repository and link the included executable:
+
+```sh
+git clone https://github.com/shenli/codex-spec.git
+cd codex-spec
+npm link
+```
+
+From the Git project you want to work on, install the skill:
+
+```sh
+codex-spec init
+```
+
+This installs `.agents/skills/spec-driven-development/` and adds ignore rules for generated evidence. Your `AGENTS.md` is preserved, and an edited skill is never silently replaced.
+
+Then ask Codex:
+
+> Use $spec-driven-development to fix the rate limiter. The first 100 requests must succeed; request 101 must return 429. Capture the failing case before changing the implementation.
+
+The skill guides Codex through defining the outcomes, inspecting relevant tests, implementing the change, and verifying it.
+
+To try the tool before using it in your own project, run `npm run demo` from this repository. It walks through executable bug, refactor, and performance examples. [See the walkthrough](DEMO.md).
+
+## Work from intent to acceptance
+
+You can also run each step directly:
 
 ```sh
 codex-spec spec rate-limiter "Limit each client to 100 requests per minute"
-# Edit the spec and add acceptance tests.
+# Edit the generated spec and add the acceptance tests.
 
 codex-spec check rate-limiter
 codex-spec verify rate-limiter --baseline
@@ -94,97 +96,93 @@ codex-spec status rate-limiter
 codex-spec report rate-limiter
 ```
 
-A baseline never grants acceptance, even if its checks pass. For a bug fix, first write a regression test that fails for the intended reason. After the fix, the tool can report that the same declared command failed before and passes now. Review the test diff too: matching commands do not prove unchanged assertions.
+For a bug fix or optimization, capture a baseline before changing the implementation. Inspect why the check fails, then run it again after the change. A baseline never grants acceptance, even when its checks pass. The comparison records that matching commands failed before and pass now; review the test diff to confirm the assertions stayed meaningful.
 
-Typical output:
-
-```text
-rate-limiter — NEEDS-REVIEW
-Checks: passed  |  Evidence: current  |  Review: pending
-  Enforce the request limit: checks passed
-  Preserve existing API behavior: checks passed
-  Explain rejected requests clearly: no automated check; review pending
-```
-
-After a person completes the declared review, record their decision:
+When a person has completed the declared review, record their decision:
 
 ```sh
 codex-spec review rate-limiter --decision approve \
   --reviewer "Alex" --note "PR #42: reviewed response copy and retry guidance"
 ```
 
-Approval is bound to that exact run. A new run requires a new review; changed inputs make the evidence stale. This is a local declaration, not identity authentication or a replacement for protected PR reviews. The skill never invents a human approval.
+Use `--decision reject` to record requested changes. Decisions apply to the exact verification run: a new run requires a new review, and changed inputs make the evidence stale. Reviewer names and references are local declarations; protected PR reviews remain the place to enforce authenticated approval.
 
-## Commands
+## What verification establishes
+
+- **Coverage:** every criterion has at least one check or review procedure. An unfinished criterion blocks execution.
+- **Check results:** declared commands run with recorded arguments, exit codes, output, and timing.
+- **Freshness:** results must match the current spec, workspace, verifier, and Node runtime.
+- **Review status:** required human decisions remain pending until explicitly recorded for that run.
+
+A passing command is only as useful as its assertions. codex-spec makes the evidence and remaining decisions visible; developers still assess whether the checks establish the intended behavior.
+
+Changes to tracked files, non-ignored untracked files, executable bits, source symlink targets, or the active spec expire earlier evidence. Committing unchanged contents preserves freshness. A check that leaves source changes behind produces stale evidence.
+
+Ignored dependencies and build output, Git metadata, external services, and contents behind symlinks are outside that fingerprint. Commands run with your local permissions, so inspect unfamiliar specs before executing them. Local checksums detect accidental edits; they do not authenticate evidence against a writer who can also change the verifier.
+
+[Architecture, trust boundaries, and recovery](docs/design.md)
+
+## Command reference
 
 | Command | Purpose |
 | --- | --- |
 | `init` | Install the repository skill and evidence ignore rules |
-| `spec <feature> "<intent>"` | Scaffold a spec with an unfinished criterion |
-| `check <feature>` | Validate the contract and preview commands without executing them |
-| `verify <feature>` | Run checks and retain evidence |
+| `spec <feature> "<intent>"` | Create an editable spec |
+| `check <feature>` | Validate the spec and preview commands without running them |
+| `verify <feature>` | Run checks and save a new evidence record |
 | `verify <feature> --baseline` | Capture before-change results |
-| `status [feature]` | Reassess current evidence; omit the feature to list all specs |
-| `report <feature>` | Print a Markdown review report |
-| `history <feature>` | List retained verification runs |
-| `review <feature> ...` | Record an approval or rejection with reviewer and reference |
+| `status [feature]` | Reassess freshness; omit the feature to list all specs |
+| `report <feature>` | Print a Markdown report for review |
+| `history <feature>` | List previous runs |
+| `review <feature> ...` | Record a completed human approval or rejection |
 
 Add `--json` for structured output. Verification progress goes to stderr.
 
-The default gate requires current evidence, passing checks, complete criterion coverage, and any declared review. Use `--gate checks` with `verify` or `status` for an automated CI gate; it still reports pending review separately.
+The default acceptance gate requires complete criterion mappings, passing declared checks, current evidence, and any required human approval. Use `--gate checks` with `verify` or `status` when human review is handled separately; it requires at least one automated check and still reports review status.
 
-Exit codes: **0** gate satisfied, **1** unmet/pending/stale, **2** invalid input, evidence, or execution infrastructure. Manual-only specs cannot satisfy the automated checks gate.
+Exit codes: **0** gate satisfied · **1** unmet, pending, or stale · **2** invalid input, evidence, or execution infrastructure.
 
-## What is saved
+## Files and evidence
 
 ```text
 .codex-spec/
-  features/rate-limiter/spec.md       # Commit this
+  features/rate-limiter/spec.md       # Editable contract; commit this
   evidence/rate-limiter/              # Generated; ignored by Git
-    latest.json
-    baseline.json                    # When a baseline is recorded
-    runs/<run-id>.json
-    review.json                      # When a review is recorded
-    reviews/<review-id>.json
+    runs/<run-id>.json                # Retained check results and fingerprints
+    reviews/<review-id>.json          # Recorded human decisions
+    latest.json                      # Pointer to the latest run
+    baseline.json                    # Present after recording a baseline
+    review.json                      # Present after recording a review
 .agents/skills/spec-driven-development/
   SKILL.md
   references/contracts.md
-  scripts/codex-spec.mjs              # Self-contained; no runtime npm install
+  scripts/codex-spec.mjs              # Self-contained executable
 ```
 
-Runs retain the compiled criteria, arguments, exit codes, bounded stdout/stderr, timing, runtime identity, and before/after workspace fingerprints. New runs create new records rather than replacing history.
-
-Freshness covers tracked files, non-ignored untracked files, executable bits, symlink targets, and the active spec. It excludes generated evidence, ignored dependencies/build output, Git metadata, and external services. Committing unchanged contents preserves freshness. A check that leaves source changes behind produces stale evidence.
+New runs retain history. Use `report` for a readable summary or share the evidence directory for detailed review. Inspect captured application output before sharing it.
 
 ## Use in CI
 
-After checking out the project and installing its dependencies:
+Commit the installed skill with your project. After checkout and dependency installation, run:
 
 ```sh
 node .agents/skills/spec-driven-development/scripts/codex-spec.mjs \
   verify rate-limiter --gate checks
 ```
 
-Upload `.codex-spec/evidence/rate-limiter/` as a CI artifact. Keep human approval in your PR review system. Evidence copied to a different workspace/runtime may be stale; use the report and retained record to review the original run.
+Upload `.codex-spec/evidence/rate-limiter/` as a CI artifact and enforce human approval through your PR review system. Evidence copied to another workspace or runtime may be stale; the report and retained record describe the original run.
 
-Commands run with your local permissions. Inspect a spec before executing it. A passing command is only as useful as its assertions; codex-spec checks coverage mappings and records execution, not semantic correctness. Local checksums detect accidental edits, not a malicious writer who can rewrite the evidence and verifier.
+## Contribute
 
-[Architecture, boundaries, and recovery](docs/design.md)
-
-## Develop and evaluate
-
-The maintainable source is strict TypeScript in `src/`. The build bundles the parser, schema validation, and CLI into the portable skill executable.
+The source is strict TypeScript in `src/`. The build produces the self-contained verifier distributed with the skill.
 
 ```sh
 npm ci --ignore-scripts
 npm run check:bundle
 npm run check
 npm run test:package
-npm run demo
 ```
 
-The demo runs actual before/after bug, refactor, and performance examples in temporary Git projects. The refactor deliberately remains pending human review.
+Tests cover contract parsing, execution failures, stale and damaged evidence, review decisions, portable installation, and the before/after example workflows. CI runs on macOS and Linux with Node 22 and 24.
 
-[Walk through the examples](DEMO.md) · [Contributing rules](AGENTS.md)
-
-Native integration follows [Codex repository skills](https://learn.chatgpt.com/docs/build-skills). codex-spec supplies acceptance discipline while Codex explores, plans, edits, and tests the code.
+[Contributing rules](AGENTS.md) · [Architecture](docs/design.md) · [Example workflows](DEMO.md) · [Codex skills](https://learn.chatgpt.com/docs/build-skills)

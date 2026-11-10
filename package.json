@@ -1,7 +1,7 @@
 {
   "name": "codex-spec",
   "version": "2.0.0",
-  "description": "A Codex development companion: readable specs, reproducible checks, and reviewable acceptance evidence.",
+  "description": "Spec-driven development for Codex: readable specs, acceptance checks, and reviewable evidence.",
   "type": "module",
   "bin": {
     "codex-spec": "bin/codex-spec.mjs"

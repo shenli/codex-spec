@@ -6,3 +6,4 @@ export * from './store.js';
 export * from './runner.js';
 export * from './present.js';
 export * from './install.js';
+export * from './provenance.js';

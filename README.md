@@ -42,6 +42,7 @@ After verification, the result makes the remaining work explicit:
 ```text
 rate-limiter — NEEDS-REVIEW
 Checks: passed  |  Evidence: current  |  Review: pending
+Criterion mapping: complete  |  Semantic coverage: not-assessed
   Enforce the request limit: checks passed
   Preserve existing API behavior: checks passed
   Make retry guidance clear: no automated check; review pending
@@ -121,6 +122,19 @@ Changes to tracked files, non-ignored untracked files, executable bits, source s
 Ignored dependencies and build output, Git metadata, external services, and contents behind symlinks are outside that fingerprint. Commands run with your local permissions, so inspect unfamiliar specs before executing them. Local checksums detect accidental edits; they do not authenticate evidence against a writer who can also change the verifier.
 
 [Architecture, trust boundaries, and recovery](docs/design.md)
+
+
+### Execution controls and evidence limits
+
+Checks run sequentially with a shared **10-minute execution budget** by default. Use `--budget 20m` to change it and `--fail-fast` to stop after the first unsuccessful check. Preparation, snapshots, cleanup, and evidence publication are outside that execution budget.
+
+Cancellation and budget exhaustion stop scheduling. Evidence distinguishes attempted checks from skipped checks, with a reason for every skipped command. A partial run cannot satisfy either gate.
+
+`--gate checks` explicitly reports **CHECKS_PASSED** when its gate succeeds. Acceptance and human review remain separate. JSON includes the selected gate, result, and exit code.
+
+Complete criterion mapping does not establish semantic coverage: output explicitly reports **Semantic coverage: not-assessed**. New records also state their workspace scope, excluded inputs, and unauthenticated origin. CI run identifiers are contextual hints, not proof of a trusted executor.
+
+Schema v1 history remains readable without rewriting old records; new runs use schema v2. See the [design notes](docs/design.md) for exact semantics and the [evaluation plan](docs/evaluation.md) for the controlled comparison and negative-control work still needed to measure product value.
 
 ## Command reference
 

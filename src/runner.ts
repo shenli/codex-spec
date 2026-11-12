@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import type { Check, Result } from './model.js';
+import { resultOutcome, type Check, type Result } from './model.js';
 
 export async function runCheck(check: Check, cwd: string, signal?: AbortSignal): Promise<Result> {
   const startedAt = new Date().toISOString(), begin = performance.now(), limit = 64 * 1024;
@@ -22,11 +22,12 @@ export async function runCheck(check: Check, cwd: string, signal?: AbortSignal):
     const abort = (): void => { failure = 'interrupted'; kill(); };
     const finish = (exitCode: number | null, terminationSignal: NodeJS.Signals | null): void => {
       clearTimeout(timer); signal?.removeEventListener('abort', abort); kill();
-      resolve({
+      const raw = {
         id: check.id, argv: check.argv, cwd: check.cwd, timeoutMs: check.timeoutMs, startedAt,
         durationMs: Math.round(performance.now() - begin), exitCode, signal: terminationSignal,
         failure, error, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), truncated
-      });
+      };
+      resolve({ ...raw, outcome: resultOutcome(raw) });
     };
     if (signal?.aborted) { failure = 'interrupted'; finish(null, null); return; }
     try {

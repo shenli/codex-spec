@@ -34,6 +34,8 @@ Use Codex's available planning, editing, and execution tools to implement the ch
 
 Run `verify <feature>`. Inspect failures, repair the implementation, and verify again. Do not weaken assertions or acceptance criteria just to obtain a pass. When a legitimate requirement changes, explain it and update the spec openly.
 
+Execution is sequential with a shared 10-minute check-execution budget by default. Use `--budget` only when the task needs a different bound; use `--fail-fast` when later checks should not run after a failure. Inspect cancelled and skipped outcomes separately from failed assertions. Honor user cancellation; do not automatically restart work the user stopped.
+
 Use `--json` when machine-readable results help. Progress is on stderr. Exit 1 can mean pending review or stale evidence as well as test failure; inspect the separate dimensions before deciding what to do next.
 
 ## Review and hand off
@@ -44,11 +46,13 @@ Use `status <feature>` after the final edits and `report <feature>` for a sharea
 - any pending human review or remaining failures;
 - the evidence path and important limits of the checks.
 
+Complete criterion mapping does not establish semantic coverage. The verifier reports semantic coverage as not-assessed; do not describe a passed gate as proof of correctness. CI-reported context is unauthenticated and is not a trusted attestation.
+
 A baseline comparison only establishes that the same declared command failed before and passes now. Inspect changes to the test assertions too.
 
 Never fabricate a human review or use an agent name as a substitute for the requested reviewer. Record `review` only when the user has explicitly supplied or authorized that person's completed decision and its reference. It is a local declaration, not authenticated identity.
 
-Do not call the change accepted while required review is pending, evidence is stale, or any criterion lacks a check/review mapping. If the process was interrupted, rerun verification; do not recover a pass by editing evidence.
+Do not call the change accepted while required review is pending, evidence is stale, or any criterion lacks a check/review mapping. After an interrupted process, verification must run again before acceptance; do so only when continuing work is authorized. Do not recover a pass by editing evidence.
 
 ## Boundaries
 

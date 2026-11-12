@@ -1,13 +1,15 @@
-import { passed, type Assessment } from './model.js';
+import { passed, resultOutcome, gateSummary, type Gate, type Assessment } from './model.js';
 
 export const safeText = (value: string): string =>
   value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
 const code = (s: string): string => '`' + safeText(s).replaceAll('`', "'").replaceAll('\n', ' ') + '`';
-export function human(a: Assessment): string {
+export function human(a: Assessment, gate: Gate = 'acceptance'): string {
   const lines = [
-    a.feature + ' — ' + a.acceptance.toUpperCase(),
+    a.feature + ' — ' + (gate === 'checks' ? gateSummary(a, gate).result : a.acceptance.toUpperCase()),
+    ...(gate === 'checks' ? ['Acceptance: ' + a.acceptance.toUpperCase()] : []),
     'Checks: ' + a.checks + '  |  Evidence: ' + a.freshness + '  |  Review: ' + a.review
   ];
+  lines.push('Criterion mapping: ' + a.coverage.mapping + '  |  Semantic coverage: ' + a.coverage.semantic);
   if (a.run?.spec) {
     const results = new Map(a.run.results.map(r => [r.id, r]));
     for (const c of a.run.spec.criteria) {
@@ -15,10 +17,14 @@ export function human(a: Assessment): string {
       lines.push('  ' + c.title + ': ' + checks + (c.review ? '; review ' + a.review : ''));
     }
     for (const r of a.run.results.filter(r => !passed(r))) {
-      lines.push('\nFailed: ' + (a.run.spec.checks.find(c => c.id === r.id)?.command ?? r.id));
+      lines.push('\n' + (resultOutcome(r) === 'cancelled' ? 'Cancelled: ' : 'Failed: ') + (a.run.spec.checks.find(c => c.id === r.id)?.command ?? r.id));
       if (r.failure) lines.push('  ' + r.failure);
       const output = (r.error ?? r.stderr.trim()) || r.stdout.trim();
       if (output) lines.push(safeText(output).split('\n').slice(0, 10).join('\n').slice(0, 1600));
+    }
+    if (a.run.schemaVersion === 2) {
+      for (const skipped of a.run.skipped) lines.push('Skipped (' + skipped.reason + '): ' + (a.run.spec.checks.find(c => c.id === skipped.id)?.command ?? skipped.id));
+      lines.push('Origin: ' + a.run.provenance.context + '; authentication: unverified; scope: workspace');
     }
     lines.push('\nEvidence: .codex-spec/evidence/' + a.feature + '/runs/' + a.run.id + '.json');
   }
@@ -32,14 +38,15 @@ export function markdownReport(a: Assessment): string {
     '# Verification: ' + safeText(a.feature), '',
     '| Dimension | Result |', '| --- | --- |',
     '| Acceptance | ' + a.acceptance + ' |', '| Automated checks | ' + a.checks + ' |',
-    '| Evidence freshness | ' + a.freshness + ' |', '| Human review | ' + a.review + ' |', ''
+    '| Evidence freshness | ' + a.freshness + ' |', '| Human review | ' + a.review + ' |',
+    '| Criterion mapping | ' + a.coverage.mapping + ' |', '| Semantic coverage | not-assessed |', ''
   ];
   if (a.run?.spec) {
     lines.push('## Criteria', '');
     for (const c of a.run.spec.criteria) {
       const checks = c.checks.map(id => {
         const result = a.run!.results.find(r => r.id === id);
-        return (result && passed(result) ? 'passed' : 'not passed') + ': ' + code(a.run!.spec!.checks.find(k => k.id === id)?.command ?? id);
+        return (result ? resultOutcome(result) : a.run!.schemaVersion === 2 && a.run!.skipped.some(s => s.id === id) ? 'skipped' : 'not run') + ': ' + code(a.run!.spec!.checks.find(k => k.id === id)?.command ?? id);
       });
       lines.push('- **' + safeText(c.title).replaceAll('*', '\\*') + '**',
         ...checks.map(c => '  - ' + c), ...(c.review ? ['  - Review: ' + safeText(c.review)] : []));
@@ -51,6 +58,24 @@ export function markdownReport(a: Assessment): string {
       '- Git HEAD at execution: ' + code(a.run.before?.head ?? 'unborn'),
       '- Record: ' + code('.codex-spec/evidence/' + a.feature + '/runs/' + a.run.id + '.json'));
   }
+
+  if (a.run?.schemaVersion === 2) {
+    const p = a.run.provenance;
+    lines.push('', '## Execution context', '',
+      '- Origin: ' + p.origin + '; context: ' + p.context + '; authentication: ' + p.authentication,
+      '- Freshness scope: ' + p.freshness.scope,
+      '- Excluded inputs: ' + p.freshness.excluded.join(', '),
+      '- Installed dependencies: ' + p.dependencies.installed + '; environment: ' + p.environment,
+      '- Fingerprinted lockfiles: ' + (p.dependencies.fingerprintedLockfiles.map(code).join(', ') || 'none recognized'),
+      '- Scheduling: sequential; failure policy: ' + a.run.execution.failurePolicy,
+      '- Shared check-execution budget: ' + a.run.execution.budgetMs + 'ms; stop reason: ' + (a.run.execution.stopReason ?? 'none'));
+    if (p.ci) lines.push('- Reported CI: ' + p.ci.provider + '; run: ' + code(p.ci.runId ?? 'unknown') +
+      '; attempt: ' + code(p.ci.attempt ?? 'unknown'), '',
+      'CI context is reported by environment variables, not authenticated by the verifier.');
+    if (a.run.skipped.length) lines.push('', 'Skipped checks:', '',
+      ...a.run.skipped.map(s => '- ' + code(a.run!.spec?.checks.find(c => c.id === s.id)?.command ?? s.id) + ': ' + s.reason));
+  } else if (a.run) lines.push('', 'Legacy schema v1: provenance was not captured; cancelled and unscheduled checks cannot be reliably distinguished.');
+
   if (a.decision) lines.push('', '## Recorded review', '',
     safeText(a.decision.reviewer) + ': ' + a.decision.decision + '. ' + safeText(a.decision.note),
     '', 'This is a local recorded declaration; reviewer identity is not authenticated by this tool.');

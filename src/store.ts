@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { PointerSchema, ReviewSchema, RunSchema, SpecError, type Run, type Review } from './model.js';
+import { PointerSchema, ReviewSchema, RunSchema, readRunRecord, SpecError, type CurrentRun, type Run, type Review } from './model.js';
 import { hash } from './spec.js';
 import { safePath, isMissing, featureDirectory } from './workspace.js';
 
@@ -51,7 +51,7 @@ export async function startRun(root: string, feature: string, id: string, starte
   const dir = await location(root, feature);
   await write(root, path.join(dir, 'latest.json'), { state: 'running', id, startedAt });
 }
-export async function finishRun(root: string, run: Run): Promise<void> {
+export async function finishRun(root: string, run: CurrentRun): Promise<void> {
   RunSchema.parse(run);
   const dir = await location(root, run.feature);
   const digest = await write(root, path.join(dir, 'runs', run.id + '.json'), run, true);
@@ -69,7 +69,7 @@ export async function loadRun(root: string, feature: string, which = 'latest'): 
   if ((await fs.stat(file)).size > 32 * 1024 * 1024) throw new SpecError('Evidence exceeds 32 MiB');
   const raw = await fs.readFile(file, 'utf8');
   if (hash(raw) !== pointer.hash) throw new SpecError('Evidence checksum mismatch; rerun verification');
-  const run = RunSchema.parse(JSON.parse(raw));
+  const run = readRunRecord(JSON.parse(raw));
   if (run.id !== pointer.id || run.feature !== feature) throw new SpecError('Evidence identity mismatch');
   return { run, hash: pointer.hash };
 }
@@ -80,7 +80,7 @@ export async function history(root: string, feature: string): Promise<Run[]> {
   try { names = await fs.readdir(runs); } catch (e) { if (isMissing(e)) return []; throw e; }
   const result: Run[] = [];
   for (const name of names.filter(n => /^[a-f0-9-]{36}\.json$/.test(n))) {
-    const run = RunSchema.parse(await json(root, path.relative(root, path.join(runs, name))));
+    const run = readRunRecord(await json(root, path.relative(root, path.join(runs, name))));
     if (run.feature !== feature || name !== run.id + '.json') throw new SpecError('History identity mismatch');
     result.push(run);
   }

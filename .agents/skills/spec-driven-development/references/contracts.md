@@ -103,3 +103,13 @@ codex-spec review rate-limiter --decision approve --reviewer "Alex" --note "PR #
 Use `reject` to record requested changes. This is a local statement bound to the run, not authenticated identity. A new run clears its applicability; changed source makes approval stale.
 
 The generated evidence directory is ignored. Never hand-edit it to change a result. Export the report or upload the evidence directory for review. Logs can contain application output; inspect them before sharing.
+
+## Execution policy and evidence versions
+
+Checks run sequentially with a shared 10-minute check-execution budget. Use `verify <feature> --budget 20m` to change it or add `--fail-fast` to stop after the first unsuccessful check. The budget excludes preparation, snapshots, cleanup, and evidence publication.
+
+Cancellation and shared-budget exhaustion stop scheduling. New records separate attempted results (passed, failed, cancelled) from skipped checks and their reasons. A stopped or partially executed run cannot satisfy either gate, even if the attempted subset passed.
+
+Successful `--gate checks` output is labelled CHECKS_PASSED while still showing full acceptance and review status. Complete criterion mapping is separate from semantic coverage, which remains not-assessed.
+
+New evidence uses schema v2 and declares its workspace scope, exclusions, and unauthenticated origin. CI context comes from environment variables and does not authenticate the run. Schema v1 records remain readable as v1 without rewriting historical bytes; missing provenance and skip semantics remain unknown.

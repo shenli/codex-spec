@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "a281265f-928e-414e-bd5b-5a65688da641",
+  "feature": "example",
+  "mode": "verify",
+  "startedAt": "2026-11-12T17:37:38.446Z",
+  "finishedAt": "2026-11-12T17:37:38.484Z",
+  "toolHash": "ac6b95a04850af5b9e0d6cea153a37d965cd0099a88fb6dcee115163add42d3a",
+  "runtime": {
+    "node": "v26.5.0",
+    "platform": "linux",
+    "arch": "arm64"
+  },
+  "spec": {
+    "feature": "example",
+    "title": "Example",
+    "hash": "fd9ead9f97da34e140a74bdd48726cbe5f53fab3761a26c091ccd55e923877a0",
+    "criteria": [
+      {
+        "id": "ac-8c1644a23c81b9e26745",
+        "title": "Expected outcome",
+        "description": "The observable outcome is correct.",
+        "line": 5,
+        "checks": [
+          "check-ffae0f9b5d236fb1d336"
+        ],
+        "review": null
+      }
+    ],
+    "checks": [
+      {
+        "id": "check-ffae0f9b5d236fb1d336",
+        "command": "node check.mjs",
+        "argv": [
+          "node",
+          "check.mjs"
+        ],
+        "cwd": ".",
+        "timeoutMs": 120000
+      }
+    ]
+  },
+  "before": {
+    "digest": "1be38b06d733cf630a2e7791d94fb266809a591b12db3beeb7ad9db4ea930130",
+    "head": "bbb0c99b8fe4e8e5e97385c97719081691b8b0e1",
+    "files": {
+      ".codex-spec/features/example/spec.md": {
+        "hash": "fd9ead9f97da34e140a74bdd48726cbe5f53fab3761a26c091ccd55e923877a0",
+        "kind": "file",
+        "executable": false
+      },
+      ".gitignore": {
+        "hash": "c194737b82ed5a2942985ea519390b07c7dd71f88247a5de2e37bd799cf40a74",
+        "kind": "file",
+        "executable": false
+      },
+      "check.mjs": {
+        "hash": "2fe2a0176b1bc86bf6f7c1b99536f49b412b9e0fc31aac2e8936e8b50bf7df97",
+        "kind": "file",
+        "executable": false
+      }
+    }
+  },
+  "after": {
+    "digest": "1be38b06d733cf630a2e7791d94fb266809a591b12db3beeb7ad9db4ea930130",
+    "head": "bbb0c99b8fe4e8e5e97385c97719081691b8b0e1",
+    "files": {
+      ".codex-spec/features/example/spec.md": {
+        "hash": "fd9ead9f97da34e140a74bdd48726cbe5f53fab3761a26c091ccd55e923877a0",
+        "kind": "file",
+        "executable": false
+      },
+      ".gitignore": {
+        "hash": "c194737b82ed5a2942985ea519390b07c7dd71f88247a5de2e37bd799cf40a74",
+        "kind": "file",
+        "executable": false
+      },
+      "check.mjs": {
+        "hash": "2fe2a0176b1bc86bf6f7c1b99536f49b412b9e0fc31aac2e8936e8b50bf7df97",
+        "kind": "file",
+        "executable": false
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "check-ffae0f9b5d236fb1d336",
+      "argv": [
+        "node",
+        "check.mjs"
+      ],
+      "cwd": ".",
+      "timeoutMs": 120000,
+      "startedAt": "2026-11-12T17:37:38.467Z",
+      "durationMs": 14,
+      "exitCode": 0,
+      "signal": null,
+      "failure": null,
+      "error": null,
+      "stdout": "checked\n",
+      "stderr": "",
+      "truncated": false
+    }
+  ],
+  "error": null
+}

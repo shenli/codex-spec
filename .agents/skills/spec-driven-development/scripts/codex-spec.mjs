@@ -20261,7 +20261,7 @@ var SnapshotSchema = external_exports.object({
     executable: external_exports.boolean()
   }).strict())
 }).strict();
-var ResultSchema = external_exports.object({
+var LegacyResultSchema = external_exports.object({
   id: external_exports.string(),
   argv: external_exports.array(external_exports.string()),
   cwd: external_exports.string(),
@@ -20277,7 +20277,7 @@ var ResultSchema = external_exports.object({
   truncated: external_exports.boolean()
 }).strict();
 var RuntimeSchema = external_exports.object({ node: external_exports.string(), platform: external_exports.string(), arch: external_exports.string() }).strict();
-var RunSchema = external_exports.object({
+var LegacyRunSchema = external_exports.object({
   schemaVersion: external_exports.literal(1),
   id: Id,
   feature: Feature,
@@ -20289,9 +20289,55 @@ var RunSchema = external_exports.object({
   spec: SpecSchema.nullable(),
   before: SnapshotSchema.nullable(),
   after: SnapshotSchema.nullable(),
-  results: external_exports.array(ResultSchema).max(64),
+  results: external_exports.array(LegacyResultSchema).max(64),
   error: external_exports.string().nullable()
 }).strict();
+var ResultSchema = LegacyResultSchema.extend({
+  outcome: external_exports.enum(["passed", "failed", "cancelled"])
+}).strict().refine((r) => r.outcome === resultOutcome(r), "Result outcome contradicts its process evidence");
+var SkipReason = external_exports.enum(["cancelled", "budget", "fail-fast", "incomplete"]);
+var ExecutionSchema = external_exports.object({
+  strategy: external_exports.literal("sequential"),
+  failurePolicy: external_exports.enum(["continue", "fail-fast"]),
+  budgetMs: external_exports.number().int().min(1).max(864e5),
+  budgetScope: external_exports.literal("check-execution"),
+  stopReason: external_exports.enum(["cancelled", "budget", "fail-fast"]).nullable()
+}).strict();
+var ProvenanceSchema = external_exports.object({
+  origin: external_exports.literal("local-process"),
+  authentication: external_exports.literal("unverified"),
+  context: external_exports.enum(["local", "ci-reported"]),
+  ci: external_exports.object({
+    provider: external_exports.enum(["github-actions", "unspecified"]),
+    runId: external_exports.string().max(256).nullable(),
+    attempt: external_exports.string().max(256).nullable()
+  }).strict().nullable(),
+  freshness: external_exports.object({ scope: external_exports.literal("workspace"), excluded: external_exports.array(external_exports.string()) }).strict(),
+  dependencies: external_exports.object({ fingerprintedLockfiles: external_exports.array(external_exports.string()), installed: external_exports.literal("not-captured") }).strict(),
+  environment: external_exports.literal("not-captured")
+}).strict();
+var RunSchema = LegacyRunSchema.extend({
+  schemaVersion: external_exports.literal(2),
+  results: external_exports.array(ResultSchema).max(64),
+  skipped: external_exports.array(external_exports.object({ id: external_exports.string(), reason: SkipReason }).strict()).max(64),
+  execution: ExecutionSchema,
+  provenance: ProvenanceSchema
+}).strict();
+function readRunRecord(value) {
+  if (!value || typeof value !== "object") throw new SpecError("Evidence must be an object");
+  const version2 = value.schemaVersion;
+  if (version2 === 1) return LegacyRunSchema.parse(value);
+  if (version2 === 2) return RunSchema.parse(value);
+  throw new SpecError("Unsupported evidence schema version: " + String(version2) + "; use a compatible verifier to read this history");
+}
+function resultOutcome(r) {
+  if (r.failure === "interrupted") return "cancelled";
+  return r.exitCode === 0 && r.signal === null && r.failure === null && r.error === null ? "passed" : "failed";
+}
+function executionStopped(run) {
+  return run.schemaVersion === 2 && (run.execution.stopReason !== null || run.skipped.length > 0);
+}
+var DEFAULT_BUDGET_MS = 6e5;
 var PointerSchema = external_exports.discriminatedUnion("state", [
   external_exports.object({ state: external_exports.literal("running"), id: Id, startedAt: external_exports.string() }).strict(),
   external_exports.object({ state: external_exports.literal("finished"), id: Id, hash: Digest }).strict()
@@ -20312,8 +20358,16 @@ var passed = (r) => r.exitCode === 0 && r.signal === null && r.failure === null 
 var incomplete = (s) => s.criteria.filter((c) => c.checks.length === 0 && c.review === null);
 function gateExit(a, gate = "acceptance") {
   if (a.acceptance === "invalid") return 2;
-  if (gate === "checks") return a.freshness === "current" && a.checks === "passed" && a.run?.mode === "verify" && a.run.spec !== null && incomplete(a.run.spec).length === 0 ? 0 : 1;
+  if (gate === "checks") return a.freshness === "current" && a.checks === "passed" && a.run?.mode === "verify" && !executionStopped(a.run) && a.run.spec !== null && incomplete(a.run.spec).length === 0 ? 0 : 1;
   return a.acceptance === "ready" ? 0 : 1;
+}
+function gateSummary(a, selected = "acceptance") {
+  const exitCode = gateExit(a, selected);
+  return {
+    selected,
+    exitCode,
+    result: exitCode === 2 ? "GATE_ERROR" : exitCode === 1 ? "GATE_UNMET" : selected === "checks" ? "CHECKS_PASSED" : "ACCEPTANCE_READY"
+  };
 }
 var SpecError = class extends Error {
   constructor(message, line) {
@@ -22102,7 +22156,7 @@ async function loadRun(root, feature, which = "latest") {
   if ((await fs2.stat(file2)).size > 32 * 1024 * 1024) throw new SpecError("Evidence exceeds 32 MiB");
   const raw = await fs2.readFile(file2, "utf8");
   if (hash2(raw) !== pointer.hash) throw new SpecError("Evidence checksum mismatch; rerun verification");
-  const run = RunSchema.parse(JSON.parse(raw));
+  const run = readRunRecord(JSON.parse(raw));
   if (run.id !== pointer.id || run.feature !== feature) throw new SpecError("Evidence identity mismatch");
   return { run, hash: pointer.hash };
 }
@@ -22118,7 +22172,7 @@ async function history(root, feature) {
   }
   const result = [];
   for (const name of names.filter((n) => /^[a-f0-9-]{36}\.json$/.test(n))) {
-    const run = RunSchema.parse(await json2(root, path3.relative(root, path3.join(runs, name))));
+    const run = readRunRecord(await json2(root, path3.relative(root, path3.join(runs, name))));
     if (run.feature !== feature || name !== run.id + ".json") throw new SpecError("History identity mismatch");
     result.push(run);
   }
@@ -22148,6 +22202,9 @@ async function loadReview(root, feature) {
   if (review.id !== pointer.id || review.feature !== feature) throw new SpecError("Review identity mismatch");
   return review;
 }
+
+// src/scheduler.ts
+import { performance as performance2 } from "node:perf_hooks";
 
 // src/runner.ts
 import { spawn } from "node:child_process";
@@ -22179,7 +22236,7 @@ async function runCheck(check2, cwd, signal) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       kill();
-      resolve({
+      const raw = {
         id: check2.id,
         argv: check2.argv,
         cwd: check2.cwd,
@@ -22193,7 +22250,8 @@ async function runCheck(check2, cwd, signal) {
         stdout: stdout.toString("utf8"),
         stderr: stderr.toString("utf8"),
         truncated
-      });
+      };
+      resolve({ ...raw, outcome: resultOutcome(raw) });
     };
     if (signal?.aborted) {
       failure2 = "interrupted";
@@ -22228,6 +22286,79 @@ async function runCheck(check2, cwd, signal) {
   });
 }
 
+// src/scheduler.ts
+async function executeChecks(checks, directories, options) {
+  const results = [];
+  let stopReason = null;
+  const controller = new AbortController(), started = performance2.now();
+  const stop = (reason) => {
+    if (stopReason === null) {
+      stopReason = reason;
+      controller.abort();
+    }
+  };
+  const cancel = () => stop("cancelled");
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) cancel();
+  const timer = setTimeout(() => stop("budget"), options.budgetMs);
+  try {
+    for (const [i, check2] of checks.entries()) {
+      if (performance2.now() - started >= options.budgetMs) stop("budget");
+      if (stopReason !== null) break;
+      options.onCheck?.(check2);
+      if (options.signal?.aborted) cancel();
+      if (stopReason !== null) break;
+      const result = await runCheck(check2, directories[i], controller.signal);
+      results.push(result);
+      if (stopReason !== null) break;
+      if (options.failurePolicy === "fail-fast" && !passed(result)) {
+        stopReason = "fail-fast";
+        break;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", cancel);
+  }
+  if (results.length < checks.length && stopReason === null) throw new Error("Scheduling ended without a stop reason");
+  const skipped = checks.slice(results.length).map((check2) => ({
+    id: check2.id,
+    reason: stopReason
+  }));
+  return { results, skipped, stopReason };
+}
+
+// src/provenance.ts
+var exclusions = [
+  "generated evidence and lock files",
+  "ignored dependencies and build output",
+  "environment variables",
+  "external services",
+  "Git metadata",
+  "contents behind source symlinks"
+];
+function provenance(env = process.env) {
+  const github = env.GITHUB_ACTIONS === "true";
+  const ci = github || env.CI !== void 0 && !["", "0", "false"].includes(env.CI.toLowerCase());
+  const field = (name) => env[name]?.slice(0, 256) ?? null;
+  return {
+    origin: "local-process",
+    authentication: "unverified",
+    context: ci ? "ci-reported" : "local",
+    ci: ci ? {
+      provider: github ? "github-actions" : "unspecified",
+      runId: github ? field("GITHUB_RUN_ID") : null,
+      attempt: github ? field("GITHUB_RUN_ATTEMPT") : null
+    } : null,
+    freshness: { scope: "workspace", excluded: [...exclusions] },
+    dependencies: { fingerprintedLockfiles: [], installed: "not-captured" },
+    environment: "not-captured"
+  };
+}
+function fingerprintedLockfiles(snapshot2) {
+  return Object.keys(snapshot2.files).filter((p) => /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|uv\.lock|poetry\.lock|Gemfile\.lock|composer\.lock)$/.test(p));
+}
+
 // src/engine.ts
 var runtime = () => ({ node: process.version, platform: process.platform, arch: process.arch });
 var toolHash = async () => hash2(await fs3.readFile(fileURLToPath(import.meta.url)));
@@ -22242,7 +22373,8 @@ function empty(feature) {
     run: null,
     decision: null,
     baseline: null,
-    changes: []
+    changes: [],
+    coverage: { mapping: "unknown", semantic: "not-assessed" }
   };
 }
 async function assess(root, feature, checkLock) {
@@ -22250,6 +22382,7 @@ async function assess(root, feature, checkLock) {
   try {
     const spec = await readSpec(root, feature), missing = incomplete(spec), required2 = spec.criteria.some((c) => c.review !== null);
     a.review = required2 ? "pending" : "not-required";
+    a.coverage.mapping = missing.length ? "incomplete" : "complete";
     if (checkLock && await locked(root)) {
       a.acceptance = "blocked";
       a.reasons.push("Verification is in progress or its lock needs recovery");
@@ -22263,13 +22396,16 @@ async function assess(root, feature, checkLock) {
     const { run } = saved;
     a.run = run;
     if (run.error || !run.spec || !run.before || !run.after) throw new SpecError(run.error ?? "Incomplete run evidence");
-    const expected = incomplete(run.spec).length ? [] : run.spec.checks;
-    if (run.results.length !== expected.length || run.results.some((r, i) => {
+    const expected = run.schemaVersion === 1 && incomplete(run.spec).length ? [] : run.spec.checks;
+    const skipped = run.schemaVersion === 2 ? run.skipped : [];
+    if (skipped.some((r, i) => r.id !== expected[run.results.length + i]?.id)) throw new SpecError("Skipped evidence does not match the declared checks");
+    if (run.schemaVersion === 2 && skipped.length && run.execution.stopReason === null && !incomplete(run.spec).length) throw new SpecError("Skipped checks need an execution stop reason");
+    if (run.results.length + skipped.length !== expected.length || run.results.some((r, i) => {
       const c = expected[i];
       return r.id !== c.id || JSON.stringify(r.argv) !== JSON.stringify(c.argv) || r.cwd !== c.cwd || r.timeoutMs !== c.timeoutMs;
     })) throw new SpecError("Evidence does not cover the declared checks");
     if (run.spec.hash === spec.hash && JSON.stringify(run.spec) !== JSON.stringify(spec)) throw new SpecError("Evidence contract mismatch");
-    a.checks = !run.results.length ? missing.length ? "pending" : "none" : run.results.every(passed) ? "passed" : "failed";
+    a.checks = missing.length ? "pending" : run.results.some((r) => !passed(r)) ? "failed" : skipped.length || !run.results.length && run.spec.checks.length ? "pending" : run.results.length ? "passed" : "none";
     const current = await snapshot(root, feature);
     a.changes = changedFiles(run.before, current);
     const fresh = run.spec.hash === spec.hash && run.before.digest === current.digest && run.after.digest === current.digest && run.toolHash === await toolHash() && JSON.stringify(run.runtime) === JSON.stringify(runtime());
@@ -22290,6 +22426,11 @@ async function assess(root, feature, checkLock) {
       a.acceptance = "invalid";
       a.freshness = "invalid";
       a.reasons.push("A check could not execute reliably; inspect its error and rerun verification");
+      return a;
+    }
+    if (executionStopped(run) && !missing.length) {
+      a.acceptance = "blocked";
+      a.reasons.push("Verification stopped: " + (run.schemaVersion === 2 ? run.execution.stopReason : "interrupted") + "; rerun the complete verification");
       return a;
     }
     if (run.mode === "baseline") {
@@ -22327,10 +22468,13 @@ async function assess(root, feature, checkLock) {
 var status = (root, feature) => assess(root, feature, true);
 async function verify(root, feature, options = {}) {
   if (process.platform === "win32") throw new SpecError("Verification requires macOS/Linux for process-group cleanup");
+  const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS, failurePolicy = options.failurePolicy ?? "continue";
+  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 864e5) throw new SpecError("Budget must be 1ms to 24h");
+  if (!["continue", "fail-fast"].includes(failurePolicy)) throw new SpecError("Failure policy must be continue or fail-fast");
   await featureDirectory(root, feature);
   return lock(root, async () => {
     const run = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: randomUUID2(),
       feature,
       mode: options.baseline ? "baseline" : "verify",
@@ -22342,12 +22486,16 @@ async function verify(root, feature, options = {}) {
       before: null,
       after: null,
       results: [],
-      error: null
+      error: null,
+      skipped: [],
+      provenance: provenance(),
+      execution: { strategy: "sequential", failurePolicy, budgetMs, budgetScope: "check-execution", stopReason: null }
     };
     await startRun(root, feature, run.id, run.startedAt);
     try {
       run.spec = await readSpec(root, feature);
       run.before = await snapshot(root, feature);
+      run.provenance.dependencies.fingerprintedLockfiles = fingerprintedLockfiles(run.before);
       const directories = [];
       for (const check2 of run.spec.checks) {
         const dir = await safePath(root, check2.cwd);
@@ -22355,12 +22503,13 @@ async function verify(root, feature, options = {}) {
         directories.push(dir);
       }
       if (!incomplete(run.spec).length) {
-        for (const [i, check2] of run.spec.checks.entries()) {
-          options.onCheck?.(check2);
-          run.results.push(await runCheck(check2, directories[i], options.signal));
-        }
-      }
+        const scheduled = await executeChecks(run.spec.checks, directories, { ...options, budgetMs, failurePolicy });
+        run.results = scheduled.results;
+        run.skipped = scheduled.skipped;
+        run.execution.stopReason = scheduled.stopReason;
+      } else run.skipped = run.spec.checks.map((c) => ({ id: c.id, reason: "incomplete" }));
       run.after = await snapshot(root, feature);
+      if (options.signal?.aborted && run.execution.stopReason === null) run.execution.stopReason = "cancelled";
     } catch (error62) {
       run.error = errorMessage(error62);
     }
@@ -22376,7 +22525,7 @@ async function recordReview(root, feature, decision, reviewer, note) {
     if (!saved || !a.run || a.freshness !== "current" || a.run.mode !== "verify") {
       throw new SpecError("Review requires a completed, current verification run");
     }
-    if (decision === "approve" && (a.checks === "failed" || a.checks === "pending")) {
+    if (decision === "approve" && (a.checks === "failed" || a.checks === "pending" || executionStopped(a.run))) {
       throw new SpecError("Cannot approve incomplete or failing checks");
     }
     const review = ReviewSchema.parse({
@@ -22440,11 +22589,13 @@ async function installSkill(root, source) {
 // src/present.ts
 var safeText = (value) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 var code = (s) => "`" + safeText(s).replaceAll("`", "'").replaceAll("\n", " ") + "`";
-function human(a) {
+function human(a, gate = "acceptance") {
   const lines = [
-    a.feature + " — " + a.acceptance.toUpperCase(),
+    a.feature + " — " + (gate === "checks" ? gateSummary(a, gate).result : a.acceptance.toUpperCase()),
+    ...gate === "checks" ? ["Acceptance: " + a.acceptance.toUpperCase()] : [],
     "Checks: " + a.checks + "  |  Evidence: " + a.freshness + "  |  Review: " + a.review
   ];
+  lines.push("Criterion mapping: " + a.coverage.mapping + "  |  Semantic coverage: " + a.coverage.semantic);
   if (a.run?.spec) {
     const results = new Map(a.run.results.map((r) => [r.id, r]));
     for (const c of a.run.spec.criteria) {
@@ -22452,10 +22603,14 @@ function human(a) {
       lines.push("  " + c.title + ": " + checks + (c.review ? "; review " + a.review : ""));
     }
     for (const r of a.run.results.filter((r2) => !passed(r2))) {
-      lines.push("\nFailed: " + (a.run.spec.checks.find((c) => c.id === r.id)?.command ?? r.id));
+      lines.push("\n" + (resultOutcome(r) === "cancelled" ? "Cancelled: " : "Failed: ") + (a.run.spec.checks.find((c) => c.id === r.id)?.command ?? r.id));
       if (r.failure) lines.push("  " + r.failure);
       const output2 = (r.error ?? r.stderr.trim()) || r.stdout.trim();
       if (output2) lines.push(safeText(output2).split("\n").slice(0, 10).join("\n").slice(0, 1600));
+    }
+    if (a.run.schemaVersion === 2) {
+      for (const skipped of a.run.skipped) lines.push("Skipped (" + skipped.reason + "): " + (a.run.spec.checks.find((c) => c.id === skipped.id)?.command ?? skipped.id));
+      lines.push("Origin: " + a.run.provenance.context + "; authentication: unverified; scope: workspace");
     }
     lines.push("\nEvidence: .codex-spec/evidence/" + a.feature + "/runs/" + a.run.id + ".json");
   }
@@ -22474,6 +22629,8 @@ function markdownReport(a) {
     "| Automated checks | " + a.checks + " |",
     "| Evidence freshness | " + a.freshness + " |",
     "| Human review | " + a.review + " |",
+    "| Criterion mapping | " + a.coverage.mapping + " |",
+    "| Semantic coverage | not-assessed |",
     ""
   ];
   if (a.run?.spec) {
@@ -22481,7 +22638,7 @@ function markdownReport(a) {
     for (const c of a.run.spec.criteria) {
       const checks = c.checks.map((id2) => {
         const result = a.run.results.find((r) => r.id === id2);
-        return (result && passed(result) ? "passed" : "not passed") + ": " + code(a.run.spec.checks.find((k) => k.id === id2)?.command ?? id2);
+        return (result ? resultOutcome(result) : a.run.schemaVersion === 2 && a.run.skipped.some((s) => s.id === id2) ? "skipped" : "not run") + ": " + code(a.run.spec.checks.find((k) => k.id === id2)?.command ?? id2);
       });
       lines.push(
         "- **" + safeText(c.title).replaceAll("*", "\\*") + "**",
@@ -22501,6 +22658,32 @@ function markdownReport(a) {
       "- Record: " + code(".codex-spec/evidence/" + a.feature + "/runs/" + a.run.id + ".json")
     );
   }
+  if (a.run?.schemaVersion === 2) {
+    const p = a.run.provenance;
+    lines.push(
+      "",
+      "## Execution context",
+      "",
+      "- Origin: " + p.origin + "; context: " + p.context + "; authentication: " + p.authentication,
+      "- Freshness scope: " + p.freshness.scope,
+      "- Excluded inputs: " + p.freshness.excluded.join(", "),
+      "- Installed dependencies: " + p.dependencies.installed + "; environment: " + p.environment,
+      "- Fingerprinted lockfiles: " + (p.dependencies.fingerprintedLockfiles.map(code).join(", ") || "none recognized"),
+      "- Scheduling: sequential; failure policy: " + a.run.execution.failurePolicy,
+      "- Shared check-execution budget: " + a.run.execution.budgetMs + "ms; stop reason: " + (a.run.execution.stopReason ?? "none")
+    );
+    if (p.ci) lines.push(
+      "- Reported CI: " + p.ci.provider + "; run: " + code(p.ci.runId ?? "unknown") + "; attempt: " + code(p.ci.attempt ?? "unknown"),
+      "",
+      "CI context is reported by environment variables, not authenticated by the verifier."
+    );
+    if (a.run.skipped.length) lines.push(
+      "",
+      "Skipped checks:",
+      "",
+      ...a.run.skipped.map((s) => "- " + code(a.run.spec?.checks.find((c) => c.id === s.id)?.command ?? s.id) + ": " + s.reason)
+    );
+  } else if (a.run) lines.push("", "Legacy schema v1: provenance was not captured; cancelled and unscheduled checks cannot be reliably distinguished.");
   if (a.decision) lines.push(
     "",
     "## Recorded review",
@@ -22537,6 +22720,8 @@ Options:
   --json                            Machine-readable output (progress goes to stderr)
   --gate acceptance|checks          Exit policy for verify/status (default: acceptance)
   --baseline                        Record before-change results, never acceptance
+  --budget <duration>               Shared check-execution budget, 1ms to 24h (default: 10m)
+  --fail-fast                       Stop scheduling after the first unsuccessful check
   --help                            Show this help
   --version                         Show version
 
@@ -22548,7 +22733,7 @@ var allowed = {
   init: ["json"],
   spec: ["json"],
   check: ["json"],
-  verify: ["json", "baseline", "gate"],
+  verify: ["json", "baseline", "gate", "budget", "fail-fast"],
   status: ["json", "gate"],
   report: ["json"],
   history: ["json"],
@@ -22567,6 +22752,8 @@ async function main() {
         json: { type: "boolean" },
         baseline: { type: "boolean" },
         gate: { type: "string" },
+        budget: { type: "string" },
+        "fail-fast": { type: "boolean" },
         decision: { type: "string" },
         reviewer: { type: "string" },
         note: { type: "string" },
@@ -22590,6 +22777,9 @@ async function main() {
     if (pos.length !== length && !(command === "status" && pos.length === 1)) throw new SpecError("Invalid arguments. Quote the intent as one argument; see --help.");
     if (values.gate && !["acceptance", "checks"].includes(values.gate)) throw new SpecError("Gate must be acceptance or checks");
     const gate = values.gate ?? "acceptance";
+    const duration3 = values.budget?.match(/^(\d+)(ms|s|m|h)$/);
+    const budgetMs = values.budget === void 0 ? void 0 : duration3 ? Number(duration3[1]) * { ms: 1, s: 1e3, m: 6e4, h: 36e5 }[duration3[2]] : NaN;
+    if (budgetMs !== void 0 && (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 864e5)) throw new SpecError("Budget must be 1ms to 24h");
     const root = await repositoryRoot();
     const print = (value, text) => console.log(json3 ? JSON.stringify(value, null, 2) : safeText(text));
     if (command === "init") {
@@ -22605,13 +22795,13 @@ async function main() {
     } else if (command === "history") {
       const runs = await history(root, feature);
       print(
-        runs.map((r) => ({ id: r.id, mode: r.mode, startedAt: r.startedAt, error: r.error })),
+        runs.map((r) => ({ id: r.id, schemaVersion: r.schemaVersion, mode: r.mode, startedAt: r.startedAt, error: r.error })),
         runs.length ? runs.map((r) => r.startedAt + "  " + r.mode + "  " + r.id + (r.error ? "  ERROR" : "")).join("\n") : "No runs yet."
       );
     } else if (command === "status" && !feature) {
       const list = [];
       for (const f of await features(root)) list.push(await status(root, f));
-      print(list, list.length ? list.map(human).join("\n\n") : 'No specs yet. Run codex-spec spec <feature> "<intent>".');
+      print(list.map((a) => ({ ...a, gate: gateSummary(a, gate) })), list.length ? list.map((a) => human(a, gate)).join("\n\n") : 'No specs yet. Run codex-spec spec <feature> "<intent>".');
       process.exitCode = Math.max(0, ...list.map((a) => gateExit(a, gate)));
     } else {
       let a;
@@ -22619,6 +22809,8 @@ async function main() {
         a = await verify(root, feature, {
           baseline: values.baseline ?? false,
           signal: controller.signal,
+          ...budgetMs === void 0 ? {} : { budgetMs },
+          failurePolicy: values["fail-fast"] ? "fail-fast" : "continue",
           onCheck: (c) => process.stderr.write("Checking: " + safeText(c.command) + "\n")
         });
       } else if (command === "review") {
@@ -22627,7 +22819,7 @@ async function main() {
         }
         a = await recordReview(root, feature, values.decision, values.reviewer, values.note);
       } else a = await status(root, feature);
-      print(a, command === "report" ? markdownReport(a) : human(a));
+      print({ ...a, gate: gateSummary(a, gate) }, command === "report" ? markdownReport(a) : human(a, gate));
       process.exitCode = gateExit(a, gate);
     }
   } catch (error62) {

@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { VERSION, gateExit, incomplete, SpecError, type Gate } from './model.js';
+import { VERSION, gateExit, gateSummary, incomplete, SpecError, type Gate } from './model.js';
 import { repositoryRoot, scaffold, readSpec, features } from './workspace.js';
 import { verify, status, recordReview } from './engine.js';
 import { history, errorMessage } from './store.js';
@@ -22,6 +22,8 @@ Options:
   --json                            Machine-readable output (progress goes to stderr)
   --gate acceptance|checks          Exit policy for verify/status (default: acceptance)
   --baseline                        Record before-change results, never acceptance
+  --budget <duration>               Shared check-execution budget, 1ms to 24h (default: 10m)
+  --fail-fast                       Stop scheduling after the first unsuccessful check
   --help                            Show this help
   --version                         Show version
 
@@ -30,7 +32,7 @@ Exit: 0 gate satisfied, 1 unmet/pending/stale, 2 invalid input or infrastructure
 Checks run as reviewed local commands; no API key is needed.
 `;
 const allowed: Record<string, string[]> = {
-  init: ['json'], spec: ['json'], check: ['json'], verify: ['json', 'baseline', 'gate'],
+  init: ['json'], spec: ['json'], check: ['json'], verify: ['json', 'baseline', 'gate', 'budget', 'fail-fast'],
   status: ['json', 'gate'], report: ['json'], history: ['json'],
   review: ['json', 'decision', 'reviewer', 'note']
 };
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
     const { positionals: pos, values } = parseArgs({
       allowPositionals: true, strict: true, options: {
         json: { type: 'boolean' }, baseline: { type: 'boolean' }, gate: { type: 'string' },
+        budget: { type: 'string' }, 'fail-fast': { type: 'boolean' },
         decision: { type: 'string' }, reviewer: { type: 'string' }, note: { type: 'string' },
         help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }
       }
@@ -56,6 +59,9 @@ async function main(): Promise<void> {
     if (pos.length !== length && !(command === 'status' && pos.length === 1)) throw new SpecError('Invalid arguments. Quote the intent as one argument; see --help.');
     if (values.gate && !['acceptance', 'checks'].includes(values.gate)) throw new SpecError('Gate must be acceptance or checks');
     const gate = (values.gate ?? 'acceptance') as Gate;
+    const duration = values.budget?.match(/^(\d+)(ms|s|m|h)$/);
+    const budgetMs = values.budget === undefined ? undefined : duration ? Number(duration[1]) * ({ ms: 1, s: 1000, m: 60000, h: 3600000 }[duration[2] as 'ms' | 's' | 'm' | 'h']) : NaN;
+    if (budgetMs !== undefined && (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 86400000)) throw new SpecError('Budget must be 1ms to 24h');
     const root = await repositoryRoot();
     const print = (value: unknown, text: string): void => console.log(json ? JSON.stringify(value, null, 2) : safeText(text));
     if (command === 'init') {
@@ -72,18 +78,19 @@ async function main(): Promise<void> {
       process.exitCode = missing.length ? 1 : 0;
     } else if (command === 'history') {
       const runs = await history(root, feature!);
-      print(runs.map(r => ({ id: r.id, mode: r.mode, startedAt: r.startedAt, error: r.error })),
+      print(runs.map(r => ({ id: r.id, schemaVersion: r.schemaVersion, mode: r.mode, startedAt: r.startedAt, error: r.error })),
         runs.length ? runs.map(r => r.startedAt + '  ' + r.mode + '  ' + r.id + (r.error ? '  ERROR' : '')).join('\n') : 'No runs yet.');
     } else if (command === 'status' && !feature) {
       const list = [];
       for (const f of await features(root)) list.push(await status(root, f));
-      print(list, list.length ? list.map(human).join('\n\n') : 'No specs yet. Run codex-spec spec <feature> "<intent>".');
+      print(list.map(a => ({ ...a, gate: gateSummary(a, gate) })), list.length ? list.map(a => human(a, gate)).join('\n\n') : 'No specs yet. Run codex-spec spec <feature> "<intent>".');
       process.exitCode = Math.max(0, ...list.map(a => gateExit(a, gate)));
     } else {
       let a;
       if (command === 'verify') {
         a = await verify(root, feature!, {
           baseline: values.baseline ?? false, signal: controller.signal,
+          ...(budgetMs === undefined ? {} : { budgetMs }), failurePolicy: values['fail-fast'] ? 'fail-fast' : 'continue',
           onCheck: c => process.stderr.write('Checking: ' + safeText(c.command) + '\n')
         });
       } else if (command === 'review') {
@@ -92,7 +99,7 @@ async function main(): Promise<void> {
         }
         a = await recordReview(root, feature!, values.decision as 'approve' | 'reject', values.reviewer, values.note);
       } else a = await status(root, feature!);
-      print(a, command === 'report' ? markdownReport(a) : human(a));
+      print({ ...a, gate: gateSummary(a, gate) }, command === 'report' ? markdownReport(a) : human(a, gate));
       process.exitCode = gateExit(a, gate);
     }
   } catch (error) {

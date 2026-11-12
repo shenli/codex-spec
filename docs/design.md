@@ -44,7 +44,7 @@ The automated checks gate deliberately does not enforce the human decision. Use 
 
 Baseline runs follow the same lifecycle and also update a baseline pointer. They never grant acceptance. A later run can identify matching commands that had a positive failure exit before and now pass on changed inputs. This observation is not a proof that assertions remained unchanged or were sufficient.
 
-Checks that fail to spawn produce an infrastructure error. Nonzero exits, signals, timeouts, and cancellation fail the check. Interruption records failure when possible. An abrupt kill can leave a lock/running marker; neither is treated as success.
+Checks that fail to spawn produce an infrastructure error. Nonzero exits, signals, and per-check timeouts fail the check. Cancellation has a distinct outcome and prevents the run from satisfying either gate. Interruption records failure when possible. An abrupt kill can leave a lock/running marker; neither is treated as success.
 
 Review records have their own UUID and checksum pointer. Each binds to the exact run ID and raw record hash. An approval cannot override failed or incomplete checks. New runs require a fresh decision when the contract calls for review.
 
@@ -87,3 +87,33 @@ Malformed/corrupted evidence returns exit 2. Fix its cause and rerun verificatio
 ## Evaluation
 
 The suite tests Markdown authoring, criterion mapping, subprocess behavior, interruption, locks, corrupted evidence, freshness, reviews, portable installation, and real before/after bug/refactor/performance fixtures. CI runs on macOS and Linux with Node 22 and 24, checks the committed bundle, runs the repository contract, and uploads its evidence.
+
+## Execution outcomes and budgets
+
+Schema v2 separates attempted checks in `results` from unscheduled checks in `skipped`. An attempted result has an outcome of passed, failed, or cancelled, validated against its raw process evidence. A skipped entry has only a check ID and a reason; it has no invented start time, exit status, or output.
+
+Cancellation stops scheduling and kills the active process group. Remaining checks are skipped. The CLI does not announce those checks as executing. A pre-cancelled run, including a manual-only contract, cannot be accepted or approved.
+
+Execution remains sequential. The default failure policy continues after an unsuccessful check to collect more diagnostics. `--fail-fast` skips the remainder after the first unsuccessful check.
+
+`--budget 10m` specifies a shared wall-clock budget for the check-execution phase; 10 minutes is the default, with a supported range of 1ms–24h. Per-check timeouts still apply. A shared budget stop cancels active work and prevents further scheduling. Preparation, snapshots, process cleanup, evidence publication, and assessment are outside this execution budget; it is not a hard deadline for the entire CLI invocation. A stopped or partially executed run cannot satisfy either gate.
+
+## Claims and provenance
+
+Assessment exposes `coverage.mapping` independently from `coverage.semantic`. Complete mapping means that criteria name a check or review procedure. Semantic coverage is always `not-assessed` in this version, including when all checks pass or a human decision is recorded. Baseline comparisons remain bounded observations about matching commands.
+
+CLI results include the selected gate and its result. Successful `--gate checks` output is labelled `CHECKS_PASSED`; the complete acceptance and review states remain visible, including pending or rejected review. JSON carries `gate.selected`, `gate.result`, and `gate.exitCode`.
+
+V2 records capture origin as `local-process`, authentication as `unverified`, and local versus CI-reported context. Recognized GitHub Actions run IDs/attempts are contextual hints from environment variables, not authenticated identity. Only allowlisted context fields are recorded; arbitrary environment variables are not collected.
+
+Provenance also declares workspace freshness scope, exclusions, recognized fingerprinted lockfiles, and the absence of installed-dependency/environment capture. A lockfile fingerprint is not evidence that the installed dependency tree matches it. No record produced by this version claims trusted CI or hermetic execution.
+
+## Schema evolution
+
+Writers produce schema v2. Versioned readers strictly validate v1 and v2 and return the original version without rewriting the record. History can contain both. Checksums continue to cover the original raw bytes; loading or listing legacy evidence does not mutate it or its pointers.
+
+V1 lacks explicit skip semantics and provenance. Those facts remain unknown; the reader does not infer them or upgrade the old claim. Old verifier fingerprints normally make legacy evidence stale for current acceptance. A new verification run produces a new v2 record rather than migrating an old success.
+
+Unsupported future versions return an explicit version error. Corrupt known versions remain errors. A newer record must be read by a compatible verifier; the tool does not silently reinterpret or discard unknown fields.
+
+[Evaluation protocol and deferred work](evaluation.md) distinguishes the current regression suite from the controlled product experiment and negative-control prototype still needed.

@@ -1,23 +1,25 @@
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { ReviewSchema, SpecError, incomplete, passed, type Assessment, type Run, type Review, type Check } from './model.js';
+import { ReviewSchema, SpecError, incomplete, passed, type Assessment, type CurrentRun, type Review, type Check, DEFAULT_BUDGET_MS, executionStopped } from './model.js';
 import { hash } from './spec.js';
 import { readSpec, snapshot, safePath, changedFiles, featureDirectory } from './workspace.js';
 import { lock, locked, startRun, finishRun, loadRun, loadReview, saveReview, errorMessage } from './store.js';
-import { runCheck } from './runner.js';
+import { executeChecks } from './scheduler.js';
+import { provenance, fingerprintedLockfiles } from './provenance.js';
 
 const runtime = () => ({ node: process.version, platform: process.platform, arch: process.arch });
 const toolHash = async () => hash(await fs.readFile(fileURLToPath(import.meta.url)));
 function empty(feature: string): Assessment {
   return { feature, acceptance: 'unverified', checks: 'pending', freshness: 'missing', review: 'not-required',
-    reasons: [], run: null, decision: null, baseline: null, changes: [] };
+    reasons: [], run: null, decision: null, baseline: null, changes: [], coverage: { mapping: 'unknown', semantic: 'not-assessed' } };
 }
 async function assess(root: string, feature: string, checkLock: boolean): Promise<Assessment> {
   const a = empty(feature);
   try {
     const spec = await readSpec(root, feature), missing = incomplete(spec), required = spec.criteria.some(c => c.review !== null);
     a.review = required ? 'pending' : 'not-required';
+    a.coverage.mapping = missing.length ? 'incomplete' : 'complete';
     if (checkLock && await locked(root)) {
       a.acceptance = 'blocked'; a.reasons.push('Verification is in progress or its lock needs recovery'); return a;
     }
@@ -25,15 +27,19 @@ async function assess(root: string, feature: string, checkLock: boolean): Promis
     if (!saved) { a.reasons.push('Run verify to collect evidence'); return a; }
     const { run } = saved; a.run = run;
     if (run.error || !run.spec || !run.before || !run.after) throw new SpecError(run.error ?? 'Incomplete run evidence');
-    const expected = incomplete(run.spec).length ? [] : run.spec.checks;
-    if (run.results.length !== expected.length ||
+    const expected = run.schemaVersion === 1 && incomplete(run.spec).length ? [] : run.spec.checks;
+    const skipped = run.schemaVersion === 2 ? run.skipped : [];
+    if (skipped.some((r, i) => r.id !== expected[run.results.length + i]?.id)) throw new SpecError('Skipped evidence does not match the declared checks');
+    if (run.schemaVersion === 2 && skipped.length && run.execution.stopReason === null && !incomplete(run.spec).length) throw new SpecError('Skipped checks need an execution stop reason');
+    if (run.results.length + skipped.length !== expected.length ||
       run.results.some((r, i) => {
         const c = expected[i]!;
         return r.id !== c.id || JSON.stringify(r.argv) !== JSON.stringify(c.argv) || r.cwd !== c.cwd || r.timeoutMs !== c.timeoutMs;
       })) throw new SpecError('Evidence does not cover the declared checks');
     // A matching hash must also carry the exact compiled contract, not altered mappings.
     if (run.spec.hash === spec.hash && JSON.stringify(run.spec) !== JSON.stringify(spec)) throw new SpecError('Evidence contract mismatch');
-    a.checks = !run.results.length ? (missing.length ? 'pending' : 'none') : run.results.every(passed) ? 'passed' : 'failed';
+    a.checks = missing.length ? 'pending' : run.results.some(r => !passed(r)) ? 'failed' :
+      skipped.length || (!run.results.length && run.spec.checks.length) ? 'pending' : run.results.length ? 'passed' : 'none';
     const current = await snapshot(root, feature);
     a.changes = changedFiles(run.before, current);
     const fresh = run.spec.hash === spec.hash && run.before.digest === current.digest && run.after.digest === current.digest &&
@@ -49,6 +55,7 @@ async function assess(root: string, feature: string, checkLock: boolean): Promis
       a.reasons.push('A check could not execute reliably; inspect its error and rerun verification');
       return a;
     }
+    if (executionStopped(run) && !missing.length) { a.acceptance = 'blocked'; a.reasons.push('Verification stopped: ' + (run.schemaVersion === 2 ? run.execution.stopReason : 'interrupted') + '; rerun the complete verification'); return a; }
     if (run.mode === 'baseline') { a.acceptance = 'blocked'; a.reasons.push('Baseline recorded; implement the change and run verify again'); return a; }
     if (missing.length) { a.acceptance = 'blocked'; a.reasons.push('Add Verify or Review: ' + missing.map(c => c.title).join(', ')); return a; }
     if (a.review === 'rejected') { a.acceptance = 'changes-requested'; a.reasons.push('The recorded review requests changes'); }
@@ -70,20 +77,27 @@ async function assess(root: string, feature: string, checkLock: boolean): Promis
 export const status = (root: string, feature: string): Promise<Assessment> => assess(root, feature, true);
 export interface VerifyOptions {
   baseline?: boolean; signal?: AbortSignal; onCheck?: (check: Check) => void;
+  budgetMs?: number; failurePolicy?: 'continue' | 'fail-fast';
 }
 export async function verify(root: string, feature: string, options: VerifyOptions = {}): Promise<Assessment> {
   if (process.platform === 'win32') throw new SpecError('Verification requires macOS/Linux for process-group cleanup');
+  const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS, failurePolicy = options.failurePolicy ?? 'continue';
+  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 86400000) throw new SpecError('Budget must be 1ms to 24h');
+  if (!['continue', 'fail-fast'].includes(failurePolicy)) throw new SpecError('Failure policy must be continue or fail-fast');
   await featureDirectory(root, feature);
   return lock(root, async () => {
-    const run: Run = {
-      schemaVersion: 1, id: randomUUID(), feature, mode: options.baseline ? 'baseline' : 'verify',
+    const run: CurrentRun = {
+      schemaVersion: 2, id: randomUUID(), feature, mode: options.baseline ? 'baseline' : 'verify',
       startedAt: new Date().toISOString(), finishedAt: '', toolHash: await toolHash(), runtime: runtime(),
-      spec: null, before: null, after: null, results: [], error: null
+      spec: null, before: null, after: null, results: [], error: null,
+      skipped: [], provenance: provenance(),
+      execution: { strategy: 'sequential', failurePolicy, budgetMs, budgetScope: 'check-execution', stopReason: null }
     };
     await startRun(root, feature, run.id, run.startedAt);
     try {
       run.spec = await readSpec(root, feature);
       run.before = await snapshot(root, feature);
+      run.provenance.dependencies.fingerprintedLockfiles = fingerprintedLockfiles(run.before);
       const directories: string[] = [];
       for (const check of run.spec.checks) {
         const dir = await safePath(root, check.cwd);
@@ -91,12 +105,12 @@ export async function verify(root: string, feature: string, options: VerifyOptio
         directories.push(dir);
       }
       if (!incomplete(run.spec).length) {
-        for (const [i, check] of run.spec.checks.entries()) {
-          options.onCheck?.(check);
-          run.results.push(await runCheck(check, directories[i]!, options.signal));
-        }
-      }
+        const scheduled = await executeChecks(run.spec.checks, directories, { ...options, budgetMs, failurePolicy });
+        run.results = scheduled.results; run.skipped = scheduled.skipped;
+        run.execution.stopReason = scheduled.stopReason;
+      } else run.skipped = run.spec.checks.map(c => ({ id: c.id, reason: 'incomplete' }));
       run.after = await snapshot(root, feature);
+      if (options.signal?.aborted && run.execution.stopReason === null) run.execution.stopReason = 'cancelled';
     } catch (error) { run.error = errorMessage(error); }
     run.finishedAt = new Date().toISOString();
     await finishRun(root, run);
@@ -111,7 +125,7 @@ export async function recordReview(root: string, feature: string, decision: 'app
     if (!saved || !a.run || a.freshness !== 'current' || a.run.mode !== 'verify') {
       throw new SpecError('Review requires a completed, current verification run');
     }
-    if (decision === 'approve' && (a.checks === 'failed' || a.checks === 'pending')) {
+    if (decision === 'approve' && (a.checks === 'failed' || a.checks === 'pending' || executionStopped(a.run))) {
       throw new SpecError('Cannot approve incomplete or failing checks');
     }
     const review: Review = ReviewSchema.parse({
